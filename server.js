@@ -1,112 +1,172 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+app.use(cors({
+  origin: ["http://localhost:5173"],
+  credentials: true
+}));
+
 app.use(express.json());
 
-// Simulation d'une base de données en mémoire
-let reservations = [];
-let nextId = 1;
+// Logs des requêtes
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log('Body:', req.body);
+  next();
+});
 
-// GET /slots - Récupérer tous les créneaux/réservations
-app.get('/slots', (req, res) => {
+// -------------------
+// Mongoose / Models
+// -------------------
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('✅ MongoDB connectée'))
+  .catch(err => console.error('❌ Erreur MongoDB:', err));
+
+const userSchema = new mongoose.Schema({
+  nom: String,
+  prenom: String,
+  email: String,
+  password: String,
+  role: String,
+  tel: String
+});
+const User = mongoose.model('User', userSchema, 'users');
+
+const reservationSchema = new mongoose.Schema({
+  slot: String,
+  nom: String,
+  prenom: String,
+  email: String,
+  tel: String,
+  status: { type: String, default: 'demande_en_cours' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: Date
+});
+const Reservation = mongoose.model('Reservation', reservationSchema, 'reservations');
+
+// -------------------
+// Routes Auth
+// -------------------
+app.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' });
+
   try {
-    // Convertir les réservations au format FullCalendar
-    const events = reservations.map(reservation => ({
-      id: reservation.id,
-      title: `${reservation.prenom} ${reservation.nom}`,
-      start: reservation.slot,
-      end: new Date(new Date(reservation.slot).getTime() + 60 * 60 * 1000).toISOString(), // +1h
-      status: reservation.status,
-      backgroundColor: reservation.status === 'demande_en_cours' ? '#ff9800' : '#f44336',
-      borderColor: reservation.status === 'demande_en_cours' ? '#ff9800' : '#f44336',
-      extendedProps: {
-        status: reservation.status,
-        email: reservation.email,
-        tel: reservation.tel,
-        nom: reservation.nom,
-        prenom: reservation.prenom
-      }
-    }));
+    const user = await User.findOne({ email, password });
+    if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
 
-    res.json(events);
-  } catch (error) {
-    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    res.json({
+      email: user.email,
+      nom: user.nom,
+      prenom: user.prenom,
+      role: user.role,
+      tel: user.tel
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// POST /reservations - Créer une nouvelle demande de réservation
-app.post('/reservations', (req, res) => {
+// Récupérer tous les utilisateurs
+app.get('/users', async (req, res) => {
   try {
-    const { slot, nom, prenom, email, tel, status = 'demande_en_cours' } = req.body;
+    const users = await User.find({});
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
 
-    // Validation des données
-    if (!slot || !nom || !prenom || !email || !tel) {
+// -------------------
+// Routes Reservations
+// -------------------
+app.get('/slots', async (req, res) => {
+  try {
+    const reservations = await Reservation.find({});
+    const events = reservations.map(r => {
+      if (!r.slot) {
+        console.warn(`Créneau invalide pour reservation id: ${r._id} slot: ${r.slot}`);
+        return null;
+      }
+      const start = new Date(r.slot);
+      const end = new Date(start.getTime() + 60*60*1000); // +1h
+      return {
+        id: r._id,
+        title: `${r.prenom} ${r.nom}`,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        status: r.status,
+        backgroundColor: r.status === 'demande_en_cours' ? '#ff9800' : '#f44336',
+        borderColor: r.status === 'demande_en_cours' ? '#ff9800' : '#f44336',
+        extendedProps: {
+          status: r.status,
+          email: r.email,
+          tel: r.tel,
+          nom: r.nom,
+          prenom: r.prenom
+        }
+      };
+    }).filter(e => e !== null);
+
+    res.json(events);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/reservations', async (req, res) => {
+  try {
+    const { slots, slot, nom, prenom, email, tel, status } = req.body;
+    const chosenSlot = slot || (Array.isArray(slots) && slots.length > 0 ? slots[0] : null);
+
+    if (!chosenSlot || !nom || !prenom || !email) {
       return res.status(400).json({ message: 'Tous les champs sont requis' });
     }
 
-    // Vérifier si le créneau est déjà pris
-    const existingReservation = reservations.find(r => r.slot === slot);
-    if (existingReservation) {
-      return res.status(409).json({ message: 'Ce créneau est déjà réservé' });
-    }
+    const existing = await Reservation.findOne({ slot: chosenSlot });
+    if (existing) return res.status(409).json({ message: 'Ce créneau est déjà réservé' });
 
-    // Créer la nouvelle réservation
-    const newReservation = {
-      id: nextId++,
-      slot,
+    const newReservation = new Reservation({
+      slot: chosenSlot,
       nom,
       prenom,
       email,
-      tel,
-      status,
-      createdAt: new Date().toISOString()
-    };
-
-    reservations.push(newReservation);
-
-    res.status(201).json({ 
-      message: 'Demande de réservation créée avec succès',
-      reservation: newReservation 
+      tel: tel || '',
+      status: status || 'demande_en_cours'
     });
-  } catch (error) {
-    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+
+    await newReservation.save();
+    res.status(201).json({ message: 'Demande de réservation créée avec succès', reservation: newReservation });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// DELETE /reservations/:id - Annuler une demande de réservation
-app.delete('/reservations/:id', (req, res) => {
+app.delete('/reservations/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const reservationIndex = reservations.findIndex(r => r.id === parseInt(id));
+    const reservation = await Reservation.findById(id);
+    if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
 
-    if (reservationIndex === -1) {
-      return res.status(404).json({ message: 'Réservation non trouvée' });
-    }
-
-    const reservation = reservations[reservationIndex];
-
-    // Seules les demandes en cours peuvent être annulées par l'élève
     if (reservation.status === 'confirme') {
       return res.status(400).json({ message: 'Impossible d\'annuler une réservation confirmée' });
     }
 
-    reservations.splice(reservationIndex, 1);
-
+    await Reservation.deleteOne({ _id: id });
     res.json({ message: 'Demande de réservation annulée avec succès' });
-  } catch (error) {
-    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// PUT /reservations/:id/status - Modifier le statut d'une réservation (pour le moniteur)
-app.put('/reservations/:id/status', (req, res) => {
+app.put('/reservations/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -115,48 +175,24 @@ app.put('/reservations/:id/status', (req, res) => {
       return res.status(400).json({ message: 'Statut invalide' });
     }
 
-    const reservation = reservations.find(r => r.id === parseInt(id));
-
-    if (!reservation) {
-      return res.status(404).json({ message: 'Réservation non trouvée' });
-    }
+    const reservation = await Reservation.findById(id);
+    if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
 
     reservation.status = status;
-    reservation.updatedAt = new Date().toISOString();
+    reservation.updatedAt = new Date();
+    await reservation.save();
 
-    res.json({ 
-      message: `Réservation ${status === 'confirme' ? 'confirmée' : status === 'refuse' ? 'refusée' : 'mise à jour'}`,
-      reservation 
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    res.json({ message: `Réservation ${status}`, reservation });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-// GET /reservations - Récupérer toutes les réservations (pour l'interface moniteur)
-app.get('/reservations', (req, res) => {
-  try {
-    const { status } = req.query;
-    
-    let filteredReservations = reservations;
-    
-    if (status) {
-      filteredReservations = reservations.filter(r => r.status === status);
-    }
+// -------------------
+// Test / Health
+// -------------------
+app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École' }));
 
-    res.json(filteredReservations);
-  } catch (error) {
-    res.status(500).json({ message: 'Erreur serveur', error: error.message });
-  }
-});
-
-// Route de test
-app.get('/', (req, res) => {
-  res.json({ message: 'API GPAE - Planning Auto École' });
-});
-
-app.listen(PORT, () => {
-  console.log(`🚗 Serveur API démarré sur http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚗 Serveur API démarré sur http://localhost:${PORT}`));
 
 export default app;
