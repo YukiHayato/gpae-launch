@@ -127,9 +127,25 @@ app.get('/slots', async (req, res) => {
 app.post('/reservations', async (req, res) => {
   try {
     const { slots, slot, nom, prenom, email, tel, status } = req.body;
-    const chosenSlot = slot || (Array.isArray(slots) && slots.length > 0 ? slots[0] : null);
 
-    if (!chosenSlot || !nom || !prenom || !email) {
+    // Choix du créneau
+    let chosenSlot = slot;
+
+    if (!chosenSlot) {
+      if (Array.isArray(slots) && slots.length > 0) {
+        chosenSlot = slots[0];
+      } else {
+        return res.status(400).json({ message: 'Créneau invalide ou non fourni' });
+      }
+    }
+
+    // Vérifie que chosenSlot est bien une chaîne
+    if (typeof chosenSlot !== 'string') {
+      return res.status(400).json({ message: 'Le créneau doit être une chaîne de caractères' });
+    }
+
+    // Vérifie que tous les champs requis sont présents
+    if (!nom || !prenom || !email) {
       return res.status(400).json({ message: 'Tous les champs sont requis' });
     }
 
@@ -148,9 +164,11 @@ app.post('/reservations', async (req, res) => {
     await newReservation.save();
     res.status(201).json({ message: 'Demande de réservation créée avec succès', reservation: newReservation });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 app.delete('/reservations/:id', async (req, res) => {
   try {
