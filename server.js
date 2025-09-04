@@ -58,8 +58,11 @@ const Reservation = mongoose.model('Reservation', reservationSchema, 'reservatio
 // Routes Auth
 // -------------------
 app.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  let { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' });
+
+  // Transformer l'email en minuscules pour insensibilité à la casse
+  email = email.toLowerCase();
 
   try {
     const user = await User.findOne({ email, password });
