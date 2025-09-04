@@ -12,6 +12,7 @@ app.use(cors({
   origin: [
     "http://localhost:5173", 
     "https://auto-ecole-essentiel.lovable.app"
+    "https://preview--auto-ecole-essentiel.lovable.app"
   ],
   credentials: true
 }));
