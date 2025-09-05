@@ -177,11 +177,15 @@ app.post('/reservations', async (req, res) => {
     await newReservation.save();
 
     if (email) {
+      // Format heure locale Europe/Paris
+      const options = { timeZone: 'Europe/Paris', hour12: false };
+      const formatted = dateSlot.toLocaleString('fr-FR', options);
+
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: email,
         subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${dateSlot.toLocaleString()} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
       }).catch(console.error);
     }
 
@@ -200,11 +204,14 @@ app.delete('/reservations/:id', async (req, res) => {
     await Reservation.deleteOne({ _id: id });
 
     if (reservation.email) {
+      const options = { timeZone: 'Europe/Paris', hour12: false };
+      const formatted = new Date(reservation.slot).toLocaleString('fr-FR', options);
+
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: reservation.email,
         subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${new Date(reservation.slot).toLocaleString()} a été annulée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} a été annulée.\n\nMerci,\nAuto-École Essentiel`
       }).catch(console.error);
     }
 
