@@ -129,34 +129,21 @@ app.get('/slots', async (req, res) => {
 
 app.post('/reservations', async (req, res) => {
   try {
-    const { slots, slot, nom, prenom, email, tel, status } = req.body;
+    const { slot, nom, prenom, email, tel, status } = req.body;
 
-    // Choix du créneau
-    let chosenSlot = slot;
+    if (!slot) return res.status(400).json({ message: 'Slot requis' });
 
-    if (!chosenSlot) {
-      if (Array.isArray(slots) && slots.length > 0) {
-        chosenSlot = slots[0];
-      } else {
-        return res.status(400).json({ message: 'Créneau invalide ou non fourni' });
-      }
+    // Convertir en Date
+    const dateSlot = new Date(slot);
+    if (isNaN(dateSlot.getTime())) {
+      return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
     }
 
-    // Vérifie que chosenSlot est bien une chaîne
-    if (typeof chosenSlot !== 'string') {
-      return res.status(400).json({ message: 'Le créneau doit être une chaîne de caractères' });
-    }
-
-    // Vérifie que tous les champs requis sont présents
-    if (!email) {
-      return res.status(400).json({ message: 'Email non requis' });
-    }
-
-    const existing = await Reservation.findOne({ slot: chosenSlot });
+    const existing = await Reservation.findOne({ slot: dateSlot.toISOString() });
     if (existing) return res.status(409).json({ message: 'Ce créneau est déjà réservé' });
 
     const newReservation = new Reservation({
-      slot: chosenSlot,
+      slot: dateSlot.toISOString(),
       nom,
       prenom,
       email,
@@ -166,11 +153,13 @@ app.post('/reservations', async (req, res) => {
 
     await newReservation.save();
     res.status(201).json({ message: 'Demande de réservation créée avec succès', reservation: newReservation });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 
 app.delete('/reservations/:id', async (req, res) => {
