@@ -9,17 +9,19 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// -------------------
+// Middleware
+// -------------------
 app.use(cors({
   origin: [
-    "http://localhost:5173", 
+    "http://localhost:5173",
     "https://auto-ecole-essentiel.lovable.app"
   ],
   credentials: true
 }));
-
 app.use(express.json());
 
-// Logs des requêtes
+// Logs simples
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   console.log('Body:', req.body);
@@ -27,7 +29,7 @@ app.use((req, res, next) => {
 });
 
 // -------------------
-// Mongoose / Models
+// MongoDB / Models
 // -------------------
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connectée'))
@@ -67,7 +69,7 @@ const transporter = nodemailer.createTransport({
 });
 
 // -------------------
-// Routes Auth
+// Auth
 // -------------------
 app.post('/login', async (req, res) => {
   let { email, password } = req.body;
@@ -92,28 +94,53 @@ app.post('/login', async (req, res) => {
 });
 
 // -------------------
-// Routes Reservations
+// Utilisateurs (admin seulement)
+// -------------------
+app.get('/users', async (req, res) => {
+  try {
+    const users = await User.find({});
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+app.post('/users', async (req, res) => {
+  try {
+    const { nom, prenom, email, password, role } = req.body;
+    if (!nom || !prenom || !email || !password || !role) {
+      return res.status(400).json({ message: 'Tous les champs sont requis' });
+    }
+
+    const existing = await User.findOne({ email });
+    if (existing) return res.status(409).json({ message: 'Email déjà utilisé' });
+
+    const newUser = new User({ nom, prenom, email, password, role });
+    await newUser.save();
+
+    res.status(201).json({ message: 'Utilisateur ajouté', user: newUser });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// -------------------
+// Créneaux & Réservations
 // -------------------
 app.get('/slots', async (req, res) => {
   try {
     const reservations = await Reservation.find({});
     const events = reservations.map(r => {
       const start = new Date(r.slot);
-      if (isNaN(start.getTime())) {
-        console.warn(`Créneau invalide pour reservation id: ${r._id} slot: ${r.slot}`);
-        return null;
-      }
-      const end = new Date(start.getTime() + 60*60*1000); // +1h
+      if (isNaN(start.getTime())) return null;
+      const end = new Date(start.getTime() + 60*60*1000);
       return {
         id: r._id,
         title: `${r.prenom} ${r.nom}`,
         start: start.toISOString(),
         end: end.toISOString(),
         status: r.status,
-        backgroundColor: r.status === 'demande_en_cours' ? '#ff9800' : '#f44336',
-        borderColor: r.status === 'demande_en_cours' ? '#ff9800' : '#f44336',
         extendedProps: {
-          status: r.status,
           email: r.email,
           tel: r.tel,
           nom: r.nom,
@@ -121,7 +148,6 @@ app.get('/slots', async (req, res) => {
         }
       };
     }).filter(e => e !== null);
-
     res.json(events);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -131,13 +157,10 @@ app.get('/slots', async (req, res) => {
 app.post('/reservations', async (req, res) => {
   try {
     const { slot, nom, prenom, email, tel, status } = req.body;
-
     if (!slot) return res.status(400).json({ message: 'Slot requis' });
 
     const dateSlot = new Date(slot);
-    if (isNaN(dateSlot.getTime())) {
-      return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
-    }
+    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
     const existing = await Reservation.findOne({ slot: dateSlot.toISOString() });
     if (existing) return res.status(409).json({ message: 'Ce créneau est déjà réservé' });
@@ -153,20 +176,17 @@ app.post('/reservations', async (req, res) => {
 
     await newReservation.save();
 
-    // --- Envoi mail confirmation ---
     if (email) {
-      await transporter.sendMail({
+      transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: email,
         subject: "Confirmation de réservation",
         text: `Bonjour ${prenom},\n\nVotre réservation pour le ${dateSlot.toLocaleString()} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
-      });
+      }).catch(console.error);
     }
 
-    res.status(201).json({ message: 'Demande de réservation créée avec succès', reservation: newReservation });
-
+    res.status(201).json({ message: 'Réservation créée', reservation: newReservation });
   } catch (err) {
-    console.error("Erreur réservation:", err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
@@ -177,45 +197,18 @@ app.delete('/reservations/:id', async (req, res) => {
     const reservation = await Reservation.findById(id);
     if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
 
-    if (reservation.status === 'confirme') {
-      return res.status(400).json({ message: 'Impossible d\'annuler une réservation confirmée' });
-    }
-
     await Reservation.deleteOne({ _id: id });
 
-    // --- Envoi mail annulation ---
     if (reservation.email) {
-      await transporter.sendMail({
+      transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: reservation.email,
         subject: "Annulation de réservation",
         text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${new Date(reservation.slot).toLocaleString()} a été annulée.\n\nMerci,\nAuto-École Essentiel`
-      });
+      }).catch(console.error);
     }
 
-    res.json({ message: 'Demande de réservation annulée avec succès' });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-app.put('/reservations/:id/status', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!['demande_en_cours', 'confirme', 'refuse'].includes(status)) {
-      return res.status(400).json({ message: 'Statut invalide' });
-    }
-
-    const reservation = await Reservation.findById(id);
-    if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
-
-    reservation.status = status;
-    reservation.updatedAt = new Date();
-    await reservation.save();
-
-    res.json({ message: `Réservation ${status}`, reservation });
+    res.json({ message: 'Réservation annulée' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -226,6 +219,6 @@ app.put('/reservations/:id/status', async (req, res) => {
 // -------------------
 app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École' }));
 
-app.listen(PORT, () => console.log(`🚗 Serveur API démarré sur http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`));
 
 export default app;
