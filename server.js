@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -56,23 +55,13 @@ const reservationSchema = new mongoose.Schema({
 const Reservation = mongoose.model('Reservation', reservationSchema, 'reservations');
 
 // -------------------
-// Mailer
-// -------------------
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-  },
-});
-
-// -------------------
 // Routes Auth
 // -------------------
 app.post('/login', async (req, res) => {
   let { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' });
 
+  // Transformer l'email en minuscules pour insensibilité à la casse
   email = email.toLowerCase();
 
   try {
@@ -86,6 +75,16 @@ app.post('/login', async (req, res) => {
       role: user.role,
       tel: user.tel
     });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// Récupérer tous les utilisateurs
+app.get('/users', async (req, res) => {
+  try {
+    const users = await User.find({});
+    res.json(users);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -128,12 +127,14 @@ app.get('/slots', async (req, res) => {
   }
 });
 
+
 app.post('/reservations', async (req, res) => {
   try {
     const { slot, nom, prenom, email, tel, status } = req.body;
 
     if (!slot) return res.status(400).json({ message: 'Slot requis' });
 
+    // Convertir en Date
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) {
       return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
@@ -152,24 +153,15 @@ app.post('/reservations', async (req, res) => {
     });
 
     await newReservation.save();
-
-    // --- Envoi mail confirmation ---
-    if (email) {
-      await transporter.sendMail({
-        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
-        to: email,
-        subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${dateSlot.toLocaleString()} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
-      });
-    }
-
     res.status(201).json({ message: 'Demande de réservation créée avec succès', reservation: newReservation });
 
   } catch (err) {
-    console.error("Erreur réservation:", err);
+    console.error(err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
+
 
 app.delete('/reservations/:id', async (req, res) => {
   try {
@@ -182,17 +174,6 @@ app.delete('/reservations/:id', async (req, res) => {
     }
 
     await Reservation.deleteOne({ _id: id });
-
-    // --- Envoi mail annulation ---
-    if (reservation.email) {
-      await transporter.sendMail({
-        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
-        to: reservation.email,
-        subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${new Date(reservation.slot).toLocaleString()} a été annulée.\n\nMerci,\nAuto-École Essentiel`
-      });
-    }
-
     res.json({ message: 'Demande de réservation annulée avec succès' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
