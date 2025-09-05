@@ -97,11 +97,11 @@ app.get('/slots', async (req, res) => {
   try {
     const reservations = await Reservation.find({});
     const events = reservations.map(r => {
-      if (!r.slot) {
+      const start = new Date(r.slot);
+      if (isNaN(start.getTime())) {
         console.warn(`Créneau invalide pour reservation id: ${r._id} slot: ${r.slot}`);
         return null;
       }
-      const start = new Date(r.slot);
       const end = new Date(start.getTime() + 60*60*1000); // +1h
       return {
         id: r._id,
@@ -126,6 +126,7 @@ app.get('/slots', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 app.post('/reservations', async (req, res) => {
   try {
