@@ -148,8 +148,8 @@ app.post('/reservations', async (req, res) => {
     }
 
     // Vérifie que tous les champs requis sont présents
-    if (!nom || !prenom || !email) {
-      return res.status(400).json({ message: 'Tous les champs sont requis' });
+    if (!email) {
+      return res.status(400).json({ message: 'Email non requis' });
     }
 
     const existing = await Reservation.findOne({ slot: chosenSlot });
