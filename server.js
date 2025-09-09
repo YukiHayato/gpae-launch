@@ -222,6 +222,34 @@ app.delete('/reservations/:id', async (req, res) => {
   }
 });
 
+app.post('/send-mail-all', async (req, res) => {
+  const { subject, message } = req.body;
+
+  if (!subject || !message) {
+    return res.status(400).json({ message: "Sujet et message requis" });
+  }
+
+  try {
+    const users = await User.find({}, "email prenom nom");
+
+    for (let user of users) {
+      if (!user.email) continue;
+
+      await transporter.sendMail({
+        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
+        to: user.email,
+        subject,
+        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nAuto-École Essentiel`
+      });
+    }
+
+    res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
+  } catch (err) {
+    console.error("Erreur envoi mails:", err);
+    res.status(500).json({ message: "Erreur lors de l'envoi des mails", error: err.message });
+  }
+});
+
 // -------------------
 // Test / Health
 // -------------------
