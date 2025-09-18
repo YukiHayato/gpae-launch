@@ -52,17 +52,12 @@ const reservationSchema = new mongoose.Schema({
   prenom: String,
   email: String,
   tel: String,
-  moniteur: String, // tag du moniteur choisi
+  moniteur: String, // nom complet du moniteur
   status: { type: String, default: 'demande_en_cours' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: Date
 });
 const Reservation = mongoose.model('Reservation', reservationSchema, 'reservations');
-
-const moniteurSchema = new mongoose.Schema({
-  tag: String
-});
-const Moniteur = mongoose.model('Moniteur', moniteurSchema, 'moniteurs');
 
 // -------------------
 // Mailer
@@ -101,7 +96,7 @@ app.post('/login', async (req, res) => {
 });
 
 // -------------------
-// Utilisateurs (admin seulement)
+// Utilisateurs (admin)
 // -------------------
 app.get('/users', async (req, res) => {
   try {
@@ -114,15 +109,15 @@ app.get('/users', async (req, res) => {
 
 app.post('/users', async (req, res) => {
   try {
-    const { nom, prenom, email, password, role } = req.body;
-    if (!nom || !prenom || !email || !password || !role) {
-      return res.status(400).json({ message: 'Tous les champs sont requis' });
+    const { nom, prenom, email, password, role, tel } = req.body;
+    if (!nom || !prenom || !role) {
+      return res.status(400).json({ message: 'Nom, prénom et rôle requis' });
     }
 
-    const existing = await User.findOne({ email });
+    const existing = email ? await User.findOne({ email }) : null;
     if (existing) return res.status(409).json({ message: 'Email déjà utilisé' });
 
-    const newUser = new User({ nom, prenom, email, password, role });
+    const newUser = new User({ nom, prenom, email: email || null, password: password || null, role, tel: tel || null });
     await newUser.save();
 
     res.status(201).json({ message: 'Utilisateur ajouté', user: newUser });
@@ -131,68 +126,23 @@ app.post('/users', async (req, res) => {
   }
 });
 
-// -------------------
-// Moniteurs (admin)
-// -------------------
-// Récupérer tous les moniteurs
-app.get('/moniteurs', async (req, res) => {
-  try {
-    const moniteurs = await User.find({ role: 'moniteur' });
-    res.json(moniteurs);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// Créer un nouveau moniteur
-app.post('/moniteurs', async (req, res) => {
-  try {
-    const { nom, prenom } = req.body;
-    if (!nom || !prenom) {
-      return res.status(400).json({ message: 'Nom et prénom requis' });
-    }
-
-    // Créer un moniteur dans la collection users avec role "moniteur"
-    const newMoniteur = new User({ 
-      nom, 
-      prenom,
-      email: null, // Pas d'email requis pour les moniteurs
-      password: null, // Pas de mot de passe requis pour les moniteurs
-      role: 'moniteur',
-      tel: null
-    });
-    
-    await newMoniteur.save();
-    res.status(201).json(newMoniteur);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// Supprimer un moniteur
-app.delete('/moniteurs/:id', async (req, res) => {
+// Supprimer un utilisateur / moniteur
+app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Vérifier si le moniteur existe et a le bon rôle
-    const moniteur = await User.findOne({ _id: id, role: 'moniteur' });
-    if (!moniteur) {
-      return res.status(404).json({ message: 'Moniteur non trouvé' });
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+
+    if (user.role === 'moniteur') {
+      const activeReservations = await Reservation.countDocuments({ moniteur: `${user.prenom} ${user.nom}` });
+      if (activeReservations > 0) {
+        return res.status(400).json({ message: `Impossible de supprimer ce moniteur. Il a ${activeReservations} réservation(s) active(s).` });
+      }
     }
 
-    // Vérifier si le moniteur a des réservations actives
-    const activeReservations = await Reservation.countDocuments({ 
-      moniteur: `${moniteur.prenom} ${moniteur.nom}` 
-    });
-    
-    if (activeReservations > 0) {
-      return res.status(400).json({ 
-        message: `Impossible de supprimer ce moniteur. Il a ${activeReservations} réservation(s) active(s).` 
-      });
-    }
-
-    await User.deleteOne({ _id: id, role: 'moniteur' });
-    res.json({ message: 'Moniteur supprimé' });
+    await User.deleteOne({ _id: id });
+    res.json({ message: 'Utilisateur supprimé' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -238,41 +188,18 @@ app.post('/reservations', async (req, res) => {
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    // NOUVELLE LOGIQUE : Vérifier qu'aucun autre élève n'a déjà réservé ce moniteur sur ce créneau
-    // ET qu'aucun élève n'a déjà réservé ce créneau (même moniteur ou autre)
-    const existingWithSameMoniteur = await Reservation.findOne({ 
-      slot: dateSlot.toISOString(), 
-      moniteur 
-    });
-    
-    const existingForUser = await Reservation.findOne({ 
-      slot: dateSlot.toISOString(), 
-      email 
-    });
+    const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur });
+    const existingForUser = await Reservation.findOne({ slot: dateSlot.toISOString(), email });
 
-    if (existingWithSameMoniteur) {
-      return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
-    }
+    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+    if (existingForUser) return res.status(409).json({ message: 'Vous avez déjà une réservation sur ce créneau' });
 
-    if (existingForUser) {
-      return res.status(409).json({ message: 'Vous avez déjà une réservation sur ce créneau' });
-    }
-
-    const newReservation = new Reservation({
-      slot: dateSlot.toISOString(),
-      nom,
-      prenom,
-      email,
-      tel: tel || '',
-      moniteur // Le nom complet du moniteur sélectionné
-    });
-
+    const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur });
     await newReservation.save();
 
     if (email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = dateSlot.toLocaleString('fr-FR', options);
-
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: email,
@@ -298,7 +225,6 @@ app.delete('/reservations/:id', async (req, res) => {
     if (reservation.email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = new Date(reservation.slot).toLocaleString('fr-FR', options);
-
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: reservation.email,
@@ -318,15 +244,12 @@ app.delete('/reservations/:id', async (req, res) => {
 // -------------------
 app.post('/send-mail-all', async (req, res) => {
   const { subject, message } = req.body;
-
   if (!subject || !message) return res.status(400).json({ message: "Sujet et message requis" });
 
   try {
     const users = await User.find({}, "email prenom nom");
-
     for (let user of users) {
       if (!user.email) continue;
-
       await transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: user.email,
@@ -334,7 +257,6 @@ app.post('/send-mail-all', async (req, res) => {
         text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nAuto-École Essentiel`
       });
     }
-
     res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
   } catch (err) {
     console.error("Erreur envoi mails:", err);
