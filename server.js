@@ -158,9 +158,11 @@ app.get('/slots', async (req, res) => {
       const start = new Date(r.slot);
       if (isNaN(start.getTime())) return null;
       const end = new Date(start.getTime() + 60*60*1000);
+
       return {
         id: r._id,
-        title: `${r.prenom} ${r.nom}`,
+        // 👉 Ici on ajoute le moniteur dans le titre
+        title: `${r.prenom} ${r.nom} - ${r.moniteur || "Sans moniteur"}`,
         start: start.toISOString(),
         end: end.toISOString(),
         status: r.status,
@@ -174,6 +176,7 @@ app.get('/slots', async (req, res) => {
         }
       };
     }).filter(e => e !== null);
+
     res.json(events);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
