@@ -52,7 +52,7 @@ const reservationSchema = new mongoose.Schema({
   prenom: String,
   email: String,
   tel: String,
-  moniteur: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // lien vers le moniteur
+  moniteur: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   status: { type: String, default: 'demande_en_cours' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: Date
@@ -124,6 +124,8 @@ app.post('/users', async (req, res) => {
   }
 });
 
+// -------------------
+// Supprimer un utilisateur (détache moniteur)
 app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -131,18 +133,16 @@ app.delete('/users/:id', async (req, res) => {
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     // Détacher le moniteur de toutes ses réservations
-    await Reservation.updateMany(
-      { moniteur: id },
-      { $set: { moniteur: null } }
-    );
+    if (user.role === 'moniteur') {
+      await Reservation.updateMany({ moniteur: id }, { $set: { moniteur: null } });
+    }
 
     await User.deleteOne({ _id: id });
-    res.json({ message: 'Utilisateur supprimé et réservations détachées' });
+    res.json({ message: 'Utilisateur supprimé et réservations détachées si moniteur' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
-
 
 // -------------------
 // Créneaux & Réservations
@@ -151,7 +151,7 @@ app.get('/slots', async (req, res) => {
   try {
     const reservations = await Reservation.find({}).populate('moniteur');
     const events = reservations.map(r => {
-      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "";
+      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "Moniteur non assigné";
       const start = new Date(r.slot);
       if (isNaN(start.getTime())) return null;
       const end = new Date(start.getTime() + 60*60*1000);
