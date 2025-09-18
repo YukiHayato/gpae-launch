@@ -134,22 +134,68 @@ app.post('/users', async (req, res) => {
 // -------------------
 // Moniteurs (admin)
 // -------------------
+// Récupérer tous les moniteurs
 app.get('/moniteurs', async (req, res) => {
-  const moniteurs = await Moniteur.find({});
-  res.json(moniteurs);
+  try {
+    const moniteurs = await User.find({ role: 'moniteur' });
+    res.json(moniteurs);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
 });
 
+// Créer un nouveau moniteur
 app.post('/moniteurs', async (req, res) => {
-  const { tag } = req.body;
-  if (!tag) return res.status(400).json({ message: 'Tag requis' });
-  const m = new Moniteur({ tag });
-  await m.save();
-  res.status(201).json(m);
+  try {
+    const { nom, prenom } = req.body;
+    if (!nom || !prenom) {
+      return res.status(400).json({ message: 'Nom et prénom requis' });
+    }
+
+    // Créer un moniteur dans la collection users avec role "moniteur"
+    const newMoniteur = new User({ 
+      nom, 
+      prenom,
+      email: null, // Pas d'email requis pour les moniteurs
+      password: null, // Pas de mot de passe requis pour les moniteurs
+      role: 'moniteur',
+      tel: null
+    });
+    
+    await newMoniteur.save();
+    res.status(201).json(newMoniteur);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
 });
 
+// Supprimer un moniteur
 app.delete('/moniteurs/:id', async (req, res) => {
-  await Moniteur.deleteOne({ _id: req.params.id });
-  res.json({ message: 'Moniteur supprimé' });
+  try {
+    const { id } = req.params;
+    
+    // Vérifier si le moniteur existe et a le bon rôle
+    const moniteur = await User.findOne({ _id: id, role: 'moniteur' });
+    if (!moniteur) {
+      return res.status(404).json({ message: 'Moniteur non trouvé' });
+    }
+
+    // Vérifier si le moniteur a des réservations actives
+    const activeReservations = await Reservation.countDocuments({ 
+      moniteur: `${moniteur.prenom} ${moniteur.nom}` 
+    });
+    
+    if (activeReservations > 0) {
+      return res.status(400).json({ 
+        message: `Impossible de supprimer ce moniteur. Il a ${activeReservations} réservation(s) active(s).` 
+      });
+    }
+
+    await User.deleteOne({ _id: id, role: 'moniteur' });
+    res.json({ message: 'Moniteur supprimé' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
 });
 
 // -------------------
@@ -192,9 +238,25 @@ app.post('/reservations', async (req, res) => {
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    // Vérifie qu’aucun autre élève n’a déjà réservé ce moniteur sur ce créneau
-    const existing = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur });
-    if (existing) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+    // NOUVELLE LOGIQUE : Vérifier qu'aucun autre élève n'a déjà réservé ce moniteur sur ce créneau
+    // ET qu'aucun élève n'a déjà réservé ce créneau (même moniteur ou autre)
+    const existingWithSameMoniteur = await Reservation.findOne({ 
+      slot: dateSlot.toISOString(), 
+      moniteur 
+    });
+    
+    const existingForUser = await Reservation.findOne({ 
+      slot: dateSlot.toISOString(), 
+      email 
+    });
+
+    if (existingWithSameMoniteur) {
+      return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+    }
+
+    if (existingForUser) {
+      return res.status(409).json({ message: 'Vous avez déjà une réservation sur ce créneau' });
+    }
 
     const newReservation = new Reservation({
       slot: dateSlot.toISOString(),
@@ -202,7 +264,7 @@ app.post('/reservations', async (req, res) => {
       prenom,
       email,
       tel: tel || '',
-      moniteur
+      moniteur // Le nom complet du moniteur sélectionné
     });
 
     await newReservation.save();
