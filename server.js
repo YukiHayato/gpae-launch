@@ -53,7 +53,6 @@ const reservationSchema = new mongoose.Schema({
   email: String,
   tel: String,
   moniteur: String, // tag du moniteur choisi
-  moniteurId: String, // ID du moniteur pour référence
   status: { type: String, default: 'demande_en_cours' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: Date
@@ -61,16 +60,14 @@ const reservationSchema = new mongoose.Schema({
 const Reservation = mongoose.model('Reservation', reservationSchema, 'reservations');
 
 const moniteurSchema = new mongoose.Schema({
-  nom: String,      // Nom complet du moniteur
-  tag: String,      // Tag court (M1, M2, etc.)
-  actif: { type: Boolean, default: true }
+  tag: String
 });
 const Moniteur = mongoose.model('Moniteur', moniteurSchema, 'moniteurs');
 
 // -------------------
 // Mailer
 // -------------------
-const transporter = nodemailer.createTransporter({
+const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
     user: process.env.MAIL_USER,
@@ -138,57 +135,21 @@ app.post('/users', async (req, res) => {
 // Moniteurs (admin)
 // -------------------
 app.get('/moniteurs', async (req, res) => {
-  try {
-    const moniteurs = await Moniteur.find({});
-    res.json(moniteurs);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
+  const moniteurs = await Moniteur.find({});
+  res.json(moniteurs);
 });
 
 app.post('/moniteurs', async (req, res) => {
-  try {
-    const { nom, tag } = req.body;
-    if (!nom || !tag) {
-      return res.status(400).json({ message: 'Nom et tag requis' });
-    }
-
-    // Vérifier que le tag n'existe pas déjà
-    const existing = await Moniteur.findOne({ tag });
-    if (existing) {
-      return res.status(409).json({ message: 'Ce tag existe déjà' });
-    }
-
-    const newMoniteur = new Moniteur({ nom, tag });
-    await newMoniteur.save();
-    
-    res.status(201).json(newMoniteur);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
+  const { tag } = req.body;
+  if (!tag) return res.status(400).json({ message: 'Tag requis' });
+  const m = new Moniteur({ tag });
+  await m.save();
+  res.status(201).json(m);
 });
 
 app.delete('/moniteurs/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Vérifier si le moniteur a des réservations actives
-    const activeReservations = await Reservation.countDocuments({ moniteurId: id });
-    if (activeReservations > 0) {
-      return res.status(400).json({ 
-        message: `Impossible de supprimer ce moniteur. Il a ${activeReservations} réservation(s) active(s).` 
-      });
-    }
-
-    const deletedMoniteur = await Moniteur.findByIdAndDelete(id);
-    if (!deletedMoniteur) {
-      return res.status(404).json({ message: 'Moniteur non trouvé' });
-    }
-
-    res.json({ message: 'Moniteur supprimé', moniteur: deletedMoniteur });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
+  await Moniteur.deleteOne({ _id: req.params.id });
+  res.json({ message: 'Moniteur supprimé' });
 });
 
 // -------------------
@@ -197,21 +158,10 @@ app.delete('/moniteurs/:id', async (req, res) => {
 app.get('/slots', async (req, res) => {
   try {
     const reservations = await Reservation.find({});
-    const moniteurs = await Moniteur.find({});
-    
     const events = reservations.map(r => {
       const start = new Date(r.slot);
       if (isNaN(start.getTime())) return null;
       const end = new Date(start.getTime() + 60*60*1000);
-      
-      // Trouver le nom complet du moniteur
-      const moniteurDoc = moniteurs.find(m => 
-        m._id.toString() === r.moniteurId || m.tag === r.moniteur
-      );
-      const moniteurNom = moniteurDoc ? 
-        `${moniteurDoc.nom} (${moniteurDoc.tag})` : 
-        r.moniteur || 'Moniteur non spécifié';
-      
       return {
         id: r._id,
         title: `${r.prenom} ${r.nom}`,
@@ -224,13 +174,10 @@ app.get('/slots', async (req, res) => {
           tel: r.tel,
           nom: r.nom,
           prenom: r.prenom,
-          moniteur: r.moniteur,
-          moniteurId: r.moniteurId,
-          moniteurNom: moniteurNom
+          moniteur: r.moniteur
         }
       };
     }).filter(e => e !== null);
-    
     res.json(events);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
@@ -239,106 +186,41 @@ app.get('/slots', async (req, res) => {
 
 app.post('/reservations', async (req, res) => {
   try {
-    const { slot, nom, prenom, email, tel, moniteur, moniteurId } = req.body;
-    
-    // Validation des champs requis
-    if (!slot) {
-      return res.status(400).json({ message: 'Slot requis' });
-    }
-    if (!moniteur && !moniteurId) {
-      return res.status(400).json({ message: 'Moniteur requis (tag ou ID)' });
-    }
-    if (!email) {
-      return res.status(400).json({ message: 'Email requis' });
-    }
+    const { slot, nom, prenom, email, tel, moniteur } = req.body;
+    if (!slot || !moniteur) return res.status(400).json({ message: 'Slot et moniteur requis' });
 
     const dateSlot = new Date(slot);
-    if (isNaN(dateSlot.getTime())) {
-      return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
-    }
+    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    // Vérification 1: Ce moniteur est-il déjà réservé sur ce créneau ?
-    const existingForMoniteur = await Reservation.findOne({ 
-      slot: dateSlot.toISOString(), 
-      $or: [
-        { moniteur: moniteur },
-        { moniteurId: moniteurId }
-      ]
-    });
+    // Vérifie qu’aucun autre élève n’a déjà réservé ce moniteur sur ce créneau
+    const existing = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur });
+    if (existing) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
 
-    if (existingForMoniteur) {
-      return res.status(409).json({ 
-        message: 'Ce moniteur est déjà réservé sur ce créneau' 
-      });
-    }
-
-    // Vérification 2: Cet élève a-t-il déjà une réservation sur ce créneau ?
-    const existingForUser = await Reservation.findOne({ 
-      slot: dateSlot.toISOString(), 
-      email 
-    });
-
-    if (existingForUser) {
-      return res.status(409).json({ 
-        message: 'Vous avez déjà une réservation sur ce créneau' 
-      });
-    }
-
-    // Récupérer les informations du moniteur
-    let moniteurTag = moniteur;
-    let finalMoniteurId = moniteurId;
-
-    if (moniteurId) {
-      const moniteurDoc = await Moniteur.findById(moniteurId);
-      if (!moniteurDoc) {
-        return res.status(404).json({ message: 'Moniteur non trouvé' });
-      }
-      moniteurTag = moniteurDoc.tag;
-      finalMoniteurId = moniteurDoc._id;
-    } else if (moniteur) {
-      const moniteurDoc = await Moniteur.findOne({ tag: moniteur });
-      if (moniteurDoc) {
-        finalMoniteurId = moniteurDoc._id;
-      }
-    }
-
-    // Créer la réservation
     const newReservation = new Reservation({
       slot: dateSlot.toISOString(),
-      nom: nom || '',
-      prenom: prenom || '',
+      nom,
+      prenom,
       email,
       tel: tel || '',
-      moniteur: moniteurTag,
-      moniteurId: finalMoniteurId
+      moniteur
     });
 
     await newReservation.save();
 
-    // Envoyer l'email de confirmation
     if (email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = dateSlot.toLocaleString('fr-FR', options);
-
-      const moniteurInfo = moniteurTag ? ` avec le moniteur ${moniteurTag}` : '';
 
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: email,
         subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom || 'cher élève'},\n\nVotre réservation pour le ${formatted}${moniteurInfo} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
-      }).catch(err => {
-        console.error('Erreur envoi email:', err);
-      });
+        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteur} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
+      }).catch(console.error);
     }
 
-    res.status(201).json({ 
-      message: 'Réservation créée', 
-      reservation: newReservation 
-    });
-
+    res.status(201).json({ message: 'Réservation créée', reservation: newReservation });
   } catch (err) {
-    console.error('Erreur lors de la création de réservation:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
@@ -347,35 +229,24 @@ app.delete('/reservations/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const reservation = await Reservation.findById(id);
-    
-    if (!reservation) {
-      return res.status(404).json({ message: 'Réservation non trouvée' });
-    }
+    if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
 
     await Reservation.deleteOne({ _id: id });
 
-    // Envoyer l'email d'annulation
     if (reservation.email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = new Date(reservation.slot).toLocaleString('fr-FR', options);
-
-      const moniteurInfo = reservation.moniteur ? 
-        ` avec le moniteur ${reservation.moniteur}` : '';
 
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: reservation.email,
         subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom || 'cher élève'},\n\nVotre réservation prévue le ${formatted}${moniteurInfo} a été annulée.\n\nMerci,\nAuto-École Essentiel`
-      }).catch(err => {
-        console.error('Erreur envoi email:', err);
-      });
+        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${reservation.moniteur} a été annulée.\n\nMerci,\nAuto-École Essentiel`
+      }).catch(console.error);
     }
 
-    res.json({ message: 'Réservation annulée', reservation });
-
+    res.json({ message: 'Réservation annulée' });
   } catch (err) {
-    console.error('Erreur lors de l\'annulation:', err);
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
@@ -386,140 +257,34 @@ app.delete('/reservations/:id', async (req, res) => {
 app.post('/send-mail-all', async (req, res) => {
   const { subject, message } = req.body;
 
-  if (!subject || !message) {
-    return res.status(400).json({ message: "Sujet et message requis" });
-  }
+  if (!subject || !message) return res.status(400).json({ message: "Sujet et message requis" });
 
   try {
     const users = await User.find({}, "email prenom nom");
-    let emailsSent = 0;
-    let emailsFailed = 0;
 
     for (let user of users) {
       if (!user.email) continue;
 
-      try {
-        await transporter.sendMail({
-          from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
-          to: user.email,
-          subject,
-          text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nAuto-École Essentiel`
-        });
-        emailsSent++;
-      } catch (emailError) {
-        console.error(`Erreur envoi email à ${user.email}:`, emailError);
-        emailsFailed++;
-      }
+      await transporter.sendMail({
+        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
+        to: user.email,
+        subject,
+        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nAuto-École Essentiel`
+      });
     }
 
-    res.json({ 
-      message: `Mails envoyés: ${emailsSent} succès, ${emailsFailed} échecs`,
-      sent: emailsSent,
-      failed: emailsFailed
-    });
-
+    res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
   } catch (err) {
     console.error("Erreur envoi mails:", err);
-    res.status(500).json({ 
-      message: "Erreur lors de l'envoi des mails", 
-      error: err.message 
-    });
-  }
-});
-
-// -------------------
-// Statistiques (bonus pour admin)
-// -------------------
-app.get('/stats', async (req, res) => {
-  try {
-    const totalUsers = await User.countDocuments({});
-    const totalReservations = await Reservation.countDocuments({});
-    const totalMoniteurs = await Moniteur.countDocuments({ actif: true });
-    
-    // Réservations par moniteur
-    const reservationsByMoniteur = await Reservation.aggregate([
-      {
-        $group: {
-          _id: "$moniteur",
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { count: -1 } }
-    ]);
-
-    // Réservations par jour de la semaine
-    const reservationsByDay = await Reservation.aggregate([
-      {
-        $addFields: {
-          dayOfWeek: { $dayOfWeek: { $dateFromString: { dateString: "$slot" } } }
-        }
-      },
-      {
-        $group: {
-          _id: "$dayOfWeek",
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    res.json({
-      totalUsers,
-      totalReservations,
-      totalMoniteurs,
-      reservationsByMoniteur,
-      reservationsByDay
-    });
-
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    res.status(500).json({ message: "Erreur lors de l'envoi des mails", error: err.message });
   }
 });
 
 // -------------------
 // Test / Health
 // -------------------
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'API GPAE - Planning Auto École avec gestion des moniteurs',
-    version: '2.0.0',
-    endpoints: {
-      auth: '/login',
-      users: '/users',
-      moniteurs: '/moniteurs',
-      slots: '/slots',
-      reservations: '/reservations',
-      stats: '/stats'
-    }
-  });
-});
+app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École' }));
 
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  });
-});
-
-// Gestion des erreurs 404
-app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Endpoint non trouvé' });
-});
-
-// Gestion des erreurs globales
-app.use((err, req, res, next) => {
-  console.error('Erreur globale:', err);
-  res.status(500).json({ 
-    message: 'Erreur interne du serveur',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`);
-  console.log(`🌍 Environnement: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📧 Mail configuré: ${process.env.MAIL_USER ? 'Oui' : 'Non'}`);
-});
+app.listen(PORT, () => console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`));
 
 export default app;
