@@ -16,7 +16,8 @@ app.use(cors({
   origin: [
     "http://localhost:5173",
     "https://auto-ecole-essentiel.lovable.app",
-    "https://greenpermis-autoecole.fr"
+    "https://greenpermis-autoecole.fr",
+    "https://preview--auto-ecole-essentiel.lovable.app/"
   ],
   credentials: true
 }));
@@ -46,12 +47,22 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema, 'users');
 
+// Nouveau schéma pour les moniteurs
+const moniteurSchema = new mongoose.Schema({
+  nom: { type: String, required: true },
+  prenom: String,
+  tag: { type: String, required: true, unique: true }
+});
+const Moniteur = mongoose.model('Moniteur', moniteurSchema, 'moniteurs');
+
+// Ajout de moniteurId dans les réservations
 const reservationSchema = new mongoose.Schema({
   slot: String,
   nom: String,
   prenom: String,
   email: String,
   tel: String,
+  moniteur: { type: mongoose.Schema.Types.ObjectId, ref: "Moniteur", required: true },
   status: { type: String, default: 'demande_en_cours' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: Date
@@ -126,18 +137,43 @@ app.post('/users', async (req, res) => {
 });
 
 // -------------------
+// Moniteurs (admin)
+// -------------------
+app.get('/moniteurs', async (req, res) => {
+  const list = await Moniteur.find();
+  res.json(list);
+});
+
+app.post('/moniteurs', async (req, res) => {
+  try {
+    const { nom, prenom, tag } = req.body;
+    if (!nom || !tag) return res.status(400).json({ message: "Nom et tag requis" });
+    const m = new Moniteur({ nom, prenom, tag });
+    await m.save();
+    res.status(201).json(m);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/moniteurs/:id', async (req, res) => {
+  await Moniteur.findByIdAndDelete(req.params.id);
+  res.json({ message: "Moniteur supprimé" });
+});
+
+// -------------------
 // Créneaux & Réservations
 // -------------------
 app.get('/slots', async (req, res) => {
   try {
-    const reservations = await Reservation.find({});
+    const reservations = await Reservation.find({}).populate("moniteur");
     const events = reservations.map(r => {
       const start = new Date(r.slot);
       if (isNaN(start.getTime())) return null;
       const end = new Date(start.getTime() + 60*60*1000);
       return {
         id: r._id,
-        title: `${r.prenom} ${r.nom}`,
+        title: `${r.prenom} ${r.nom} – ${r.moniteur?.tag || "Moniteur"}`,
         start: start.toISOString(),
         end: end.toISOString(),
         status: r.status,
@@ -145,7 +181,8 @@ app.get('/slots', async (req, res) => {
           email: r.email,
           tel: r.tel,
           nom: r.nom,
-          prenom: r.prenom
+          prenom: r.prenom,
+          moniteur: r.moniteur
         }
       };
     }).filter(e => e !== null);
@@ -157,14 +194,18 @@ app.get('/slots', async (req, res) => {
 
 app.post('/reservations', async (req, res) => {
   try {
-    const { slot, nom, prenom, email, tel, status } = req.body;
-    if (!slot) return res.status(400).json({ message: 'Slot requis' });
+    const { slot, nom, prenom, email, tel, status, moniteurId } = req.body;
+    if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
+
+    const moniteur = await Moniteur.findById(moniteurId);
+    if (!moniteur) return res.status(400).json({ message: 'Moniteur inconnu' });
 
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    const existing = await Reservation.findOne({ slot: dateSlot.toISOString() });
-    if (existing) return res.status(409).json({ message: 'Ce créneau est déjà réservé' });
+    // Vérifie si ce moniteur est déjà pris
+    const existing = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
+    if (existing) return res.status(409).json({ message: 'Ce créneau est déjà réservé pour ce moniteur' });
 
     const newReservation = new Reservation({
       slot: dateSlot.toISOString(),
@@ -172,13 +213,13 @@ app.post('/reservations', async (req, res) => {
       prenom,
       email,
       tel: tel || '',
+      moniteur: moniteurId,
       status: status || 'demande_en_cours'
     });
 
     await newReservation.save();
 
     if (email) {
-      // Format heure locale Europe/Paris
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = dateSlot.toLocaleString('fr-FR', options);
 
@@ -186,7 +227,7 @@ app.post('/reservations', async (req, res) => {
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: email,
         subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${prenom},\n\nVotre réservation avec ${moniteur.nom} ${moniteur.prenom || ""} pour le ${formatted} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
       }).catch(console.error);
     }
 
@@ -199,7 +240,7 @@ app.post('/reservations', async (req, res) => {
 app.delete('/reservations/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const reservation = await Reservation.findById(id);
+    const reservation = await Reservation.findById(id).populate("moniteur");
     if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
 
     await Reservation.deleteOne({ _id: id });
@@ -212,7 +253,7 @@ app.delete('/reservations/:id', async (req, res) => {
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: reservation.email,
         subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} a été annulée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${reservation.prenom},\n\nVotre réservation avec ${reservation.moniteur?.nom || "moniteur"} prévue le ${formatted} a été annulée.\n\nMerci,\nAuto-École Essentiel`
       }).catch(console.error);
     }
 
