@@ -127,23 +127,22 @@ app.post('/users', async (req, res) => {
 app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
-    if (user.role === 'moniteur') {
-      const activeReservations = await Reservation.countDocuments({ moniteur: id });
-      if (activeReservations > 0) {
-        return res.status(400).json({ message: `Impossible de supprimer ce moniteur. Il a ${activeReservations} réservation(s) active(s).` });
-      }
-    }
+    // Détacher le moniteur de toutes ses réservations
+    await Reservation.updateMany(
+      { moniteur: id },
+      { $set: { moniteur: null } }
+    );
 
     await User.deleteOne({ _id: id });
-    res.json({ message: 'Utilisateur supprimé' });
+    res.json({ message: 'Utilisateur supprimé et réservations détachées' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 // -------------------
 // Créneaux & Réservations
