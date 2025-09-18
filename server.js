@@ -152,7 +152,7 @@ app.get('/slots', async (req, res) => {
   try {
     const reservations = await Reservation.find({}).populate('moniteur');
     const events = reservations.map(r => {
-      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "Moniteur non assigné";
+      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "";
       const start = new Date(r.slot);
       if (isNaN(start.getTime())) return null;
       const end = new Date(start.getTime() + 60*60*1000);
