@@ -52,7 +52,7 @@ const reservationSchema = new mongoose.Schema({
   prenom: String,
   email: String,
   tel: String,
-  moniteur: String, // nom complet du moniteur
+  moniteur: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // lien vers le moniteur
   status: { type: String, default: 'demande_en_cours' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: Date
@@ -110,9 +110,7 @@ app.get('/users', async (req, res) => {
 app.post('/users', async (req, res) => {
   try {
     const { nom, prenom, email, password, role, tel } = req.body;
-    if (!nom || !prenom || !role) {
-      return res.status(400).json({ message: 'Nom, prénom et rôle requis' });
-    }
+    if (!nom || !prenom || !role) return res.status(400).json({ message: 'Nom, prénom et rôle requis' });
 
     const existing = email ? await User.findOne({ email }) : null;
     if (existing) return res.status(409).json({ message: 'Email déjà utilisé' });
@@ -126,16 +124,15 @@ app.post('/users', async (req, res) => {
   }
 });
 
-// Supprimer un utilisateur / moniteur
 app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     if (user.role === 'moniteur') {
-      const activeReservations = await Reservation.countDocuments({ moniteur: `${user.prenom} ${user.nom}` });
+      const activeReservations = await Reservation.countDocuments({ moniteur: id });
       if (activeReservations > 0) {
         return res.status(400).json({ message: `Impossible de supprimer ce moniteur. Il a ${activeReservations} réservation(s) active(s).` });
       }
@@ -153,26 +150,26 @@ app.delete('/users/:id', async (req, res) => {
 // -------------------
 app.get('/slots', async (req, res) => {
   try {
-    const reservations = await Reservation.find({});
+    const reservations = await Reservation.find({}).populate('moniteur');
     const events = reservations.map(r => {
+      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "Moniteur non assigné";
       const start = new Date(r.slot);
       if (isNaN(start.getTime())) return null;
       const end = new Date(start.getTime() + 60*60*1000);
 
       return {
         id: r._id,
-        // 👉 Ici on ajoute le moniteur dans le titre
-        title: `${r.prenom} ${r.nom} - ${r.moniteur || "Sans moniteur"}`,
+        title: `${r.prenom} ${r.nom} - ${moniteurNom}`,
         start: start.toISOString(),
         end: end.toISOString(),
         status: r.status,
-        moniteur: r.moniteur,
+        moniteur: moniteurNom,
         extendedProps: {
           email: r.email,
           tel: r.tel,
           nom: r.nom,
           prenom: r.prenom,
-          moniteur: r.moniteur
+          moniteur: moniteurNom
         }
       };
     }).filter(e => e !== null);
@@ -185,29 +182,34 @@ app.get('/slots', async (req, res) => {
 
 app.post('/reservations', async (req, res) => {
   try {
-    const { slot, nom, prenom, email, tel, moniteur } = req.body;
-    if (!slot || !moniteur) return res.status(400).json({ message: 'Slot et moniteur requis' });
+    const { slot, nom, prenom, email, tel, moniteurId } = req.body;
+    if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
 
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur });
+    const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
     const existingForUser = await Reservation.findOne({ slot: dateSlot.toISOString(), email });
 
     if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
     if (existingForUser) return res.status(409).json({ message: 'Vous avez déjà une réservation sur ce créneau' });
 
-    const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur });
+    const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur: moniteurId });
     await newReservation.save();
 
+    // Envoi email
     if (email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = dateSlot.toLocaleString('fr-FR', options);
+
+      const moniteur = await User.findById(moniteurId);
+      const moniteurNom = moniteur ? `${moniteur.prenom} ${moniteur.nom}` : "Non assigné";
+
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: email,
         subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteur} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteurNom} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
       }).catch(console.error);
     }
 
@@ -220,7 +222,7 @@ app.post('/reservations', async (req, res) => {
 app.delete('/reservations/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const reservation = await Reservation.findById(id);
+    const reservation = await Reservation.findById(id).populate('moniteur');
     if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
 
     await Reservation.deleteOne({ _id: id });
@@ -228,11 +230,13 @@ app.delete('/reservations/:id', async (req, res) => {
     if (reservation.email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = new Date(reservation.slot).toLocaleString('fr-FR', options);
+      const moniteurNom = reservation.moniteur ? `${reservation.moniteur.prenom} ${reservation.moniteur.nom}` : "Non assigné";
+
       transporter.sendMail({
         from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
         to: reservation.email,
         subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${reservation.moniteur} a été annulée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${moniteurNom} a été annulée.\n\nMerci,\nAuto-École Essentiel`
       }).catch(console.error);
     }
 
