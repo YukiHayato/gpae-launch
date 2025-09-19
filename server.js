@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -22,7 +23,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Logs simples
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   console.log('Body:', req.body);
@@ -74,12 +74,11 @@ const transporter = nodemailer.createTransport({
 // Auth
 // -------------------
 app.post('/login', async (req, res) => {
-  let { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' });
-
-  email = email.toLowerCase();
-
   try {
+    let { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' });
+
+    email = email.toLowerCase();
     const user = await User.findOne({ email, password });
     if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
 
@@ -96,7 +95,7 @@ app.post('/login', async (req, res) => {
 });
 
 // -------------------
-// Utilisateurs (admin)
+// Utilisateurs
 // -------------------
 app.get('/users', async (req, res) => {
   try {
@@ -124,15 +123,12 @@ app.post('/users', async (req, res) => {
   }
 });
 
-// -------------------
-// Supprimer un utilisateur (détache moniteur)
 app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const user = await User.findById(id);
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
-    // Détacher le moniteur de toutes ses réservations
     if (user.role === 'moniteur') {
       await Reservation.updateMany({ moniteur: id }, { $set: { moniteur: null } });
     }
@@ -147,6 +143,15 @@ app.delete('/users/:id', async (req, res) => {
 // -------------------
 // Créneaux & Réservations
 // -------------------
+
+// Helper pour récupérer les moniteurs libres sur un slot
+const getAvailableMoniteurs = async (slotISO: string) => {
+  const allMoniteurs = await User.find({ role: 'moniteur' });
+  const reservations = await Reservation.find({ slot: slotISO });
+  const reservedIds = reservations.map(r => r.moniteur?.toString()).filter(Boolean);
+  return allMoniteurs.filter(m => !reservedIds.includes(m._id.toString()));
+};
+
 app.get('/slots', async (req, res) => {
   try {
     const reservations = await Reservation.find({}).populate('moniteur');
@@ -179,23 +184,33 @@ app.get('/slots', async (req, res) => {
   }
 });
 
+// POST réservation (côté élève)
 app.post('/reservations', async (req, res) => {
   try {
     const { slot, nom, prenom, email, tel, moniteurId } = req.body;
-    if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
+    if (!slot) return res.status(400).json({ message: 'Slot requis' });
 
     const dateSlot = new Date(slot);
-    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
+    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide' });
 
-    // Vérifie si le moniteur est déjà réservé sur ce créneau
-    const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
-    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+    const slotISO = dateSlot.toISOString();
+    let selectedMoniteurId = moniteurId;
 
-    // Vérifie si l'élève a déjà une réservation avec ce même moniteur
-    const existingForUserSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), email, moniteur: moniteurId });
-    if (existingForUserSameMoniteur) return res.status(409).json({ message: 'Vous avez déjà une réservation avec ce moniteur sur ce créneau' });
+    // Si aucun moniteur choisi, prendre le premier disponible
+    const availableMoniteurs = await getAvailableMoniteurs(slotISO);
+    if (!selectedMoniteurId) {
+      if (availableMoniteurs.length === 0) {
+        return res.status(409).json({ message: 'Aucun moniteur disponible sur ce créneau' });
+      }
+      selectedMoniteurId = availableMoniteurs[0]._id;
+    } else {
+      // Vérifie que le moniteur choisi est libre
+      if (!availableMoniteurs.find(m => m._id.toString() === selectedMoniteurId.toString())) {
+        return res.status(409).json({ message: 'Le moniteur choisi n’est pas disponible sur ce créneau' });
+      }
+    }
 
-    const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur: moniteurId });
+    const newReservation = new Reservation({ slot: slotISO, nom, prenom, email, tel: tel || '', moniteur: selectedMoniteurId });
     await newReservation.save();
 
     // Envoi email
@@ -203,7 +218,7 @@ app.post('/reservations', async (req, res) => {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = dateSlot.toLocaleString('fr-FR', options);
 
-      const moniteur = await User.findById(moniteurId);
+      const moniteur = await User.findById(selectedMoniteurId);
       const moniteurNom = moniteur ? `${moniteur.prenom} ${moniteur.nom}` : "Non assigné";
 
       transporter.sendMail({
@@ -220,6 +235,7 @@ app.post('/reservations', async (req, res) => {
   }
 });
 
+// DELETE réservation
 app.delete('/reservations/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -248,7 +264,7 @@ app.delete('/reservations/:id', async (req, res) => {
 });
 
 // -------------------
-// Admin : Toutes les réservations d'un même créneau
+// Admin endpoints
 // -------------------
 app.get('/admin/reservations/:slot', async (req, res) => {
   try {
@@ -273,9 +289,6 @@ app.get('/admin/reservations/:slot', async (req, res) => {
   }
 });
 
-// -------------------
-// Admin : Ajouter une réservation sur un créneau existant
-// -------------------
 app.post('/admin/reservations', async (req, res) => {
   try {
     const { slot, nom, prenom, email, tel, moniteurId } = req.body;
@@ -293,31 +306,6 @@ app.post('/admin/reservations', async (req, res) => {
     res.status(201).json({ message: 'Réservation ajoutée sur le créneau', reservation: newReservation });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// -------------------
-// Envoi mail à tous
-// -------------------
-app.post('/send-mail-all', async (req, res) => {
-  const { subject, message } = req.body;
-  if (!subject || !message) return res.status(400).json({ message: "Sujet et message requis" });
-
-  try {
-    const users = await User.find({}, "email prenom nom");
-    for (let user of users) {
-      if (!user.email) continue;
-      await transporter.sendMail({
-        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
-        to: user.email,
-        subject,
-        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nAuto-École Essentiel`
-      });
-    }
-    res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
-  } catch (err) {
-    console.error("Erreur envoi mails:", err);
-    res.status(500).json({ message: "Erreur lors de l'envoi des mails", error: err.message });
   }
 });
 
