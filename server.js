@@ -207,10 +207,10 @@ app.post('/reservations', async (req, res) => {
       const moniteurNom = moniteur ? `${moniteur.prenom} ${moniteur.nom}` : "Non assigné";
 
       transporter.sendMail({
-        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
+        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
         to: email,
         subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteurNom} a bien été enregistrée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteurNom} a bien été enregistrée.\n\nMerci,\nGreen Permis Auto-école`
       }).catch(console.error);
     }
 
@@ -234,10 +234,10 @@ app.delete('/reservations/:id', async (req, res) => {
       const moniteurNom = reservation.moniteur ? `${reservation.moniteur.prenom} ${reservation.moniteur.nom}` : "Non assigné";
 
       transporter.sendMail({
-        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
+        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
         to: reservation.email,
         subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${moniteurNom} a été annulée.\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${moniteurNom} a été annulée.\n\nMerci,\nGreen Permis Auto-école`
       }).catch(console.error);
     }
 
@@ -308,10 +308,10 @@ app.post('/send-mail-all', async (req, res) => {
     for (let user of users) {
       if (!user.email) continue;
       await transporter.sendMail({
-        from: `"Auto-École Essentiel" <${process.env.MAIL_USER}>`,
+        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
         to: user.email,
         subject,
-        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nAuto-École Essentiel`
+        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nGreen Permis Auto-école`
       });
     }
     res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
