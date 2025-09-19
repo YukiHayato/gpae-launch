@@ -187,11 +187,13 @@ app.post('/reservations', async (req, res) => {
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
+    // Vérifie si le moniteur est déjà réservé sur ce créneau
     const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
-    const existingForUser = await Reservation.findOne({ slot: dateSlot.toISOString(), email });
-
     if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
-    if (existingForUser) return res.status(409).json({ message: 'Vous avez déjà une réservation sur ce créneau' });
+
+    // Vérifie si l'élève a déjà une réservation avec ce même moniteur
+    const existingForUserSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), email, moniteur: moniteurId });
+    if (existingForUserSameMoniteur) return res.status(409).json({ message: 'Vous avez déjà une réservation avec ce moniteur sur ce créneau' });
 
     const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur: moniteurId });
     await newReservation.save();
@@ -240,6 +242,55 @@ app.delete('/reservations/:id', async (req, res) => {
     }
 
     res.json({ message: 'Réservation annulée' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// -------------------
+// Admin : Toutes les réservations d'un même créneau
+// -------------------
+app.get('/admin/reservations/:slot', async (req, res) => {
+  try {
+    const { slot } = req.params;
+    const dateSlot = new Date(slot);
+    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide' });
+
+    const reservations = await Reservation.find({ slot: dateSlot.toISOString() }).populate('moniteur');
+    const formatted = reservations.map(r => ({
+      id: r._id,
+      nom: r.nom,
+      prenom: r.prenom,
+      email: r.email,
+      tel: r.tel,
+      moniteur: r.moniteur ? { id: r.moniteur._id, nom: r.moniteur.nom, prenom: r.moniteur.prenom } : null,
+      status: r.status
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+// -------------------
+// Admin : Ajouter une réservation sur un créneau existant
+// -------------------
+app.post('/admin/reservations', async (req, res) => {
+  try {
+    const { slot, nom, prenom, email, tel, moniteurId } = req.body;
+    if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
+
+    const dateSlot = new Date(slot);
+    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide' });
+
+    const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
+    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+
+    const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur: moniteurId });
+    await newReservation.save();
+
+    res.status(201).json({ message: 'Réservation ajoutée sur le créneau', reservation: newReservation });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
