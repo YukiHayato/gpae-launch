@@ -181,11 +181,17 @@ app.get('/slots', async (req, res) => {
 
 app.post('/reservations', async (req, res) => {
   try {
-    const { slot, nom, prenom, email, tel, moniteurId } = req.body;
+    const { slot, nom, prenom, email, tel, moniteurId, role } = req.body;
     if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
 
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
+
+    // Vérification spéciale : bloquer 14h pour les élèves
+    const slotHour = dateSlot.getHours(); // heure locale serveur
+    if (slotHour === 14 && role !== 'admin') {
+      return res.status(403).json({ message: 'Les élèves ne peuvent pas réserver à 14h.' });
+    }
 
     // Vérifie si le moniteur est déjà réservé sur ce créneau
     const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
@@ -195,7 +201,14 @@ app.post('/reservations', async (req, res) => {
     const existingForUserSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), email, moniteur: moniteurId });
     if (existingForUserSameMoniteur) return res.status(409).json({ message: 'Vous avez déjà une réservation avec ce moniteur sur ce créneau' });
 
-    const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur: moniteurId });
+    const newReservation = new Reservation({
+      slot: dateSlot.toISOString(),
+      nom,
+      prenom,
+      email,
+      tel: tel || '',
+      moniteur: moniteurId
+    });
     await newReservation.save();
 
     // Envoi email
@@ -219,6 +232,7 @@ app.post('/reservations', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 app.delete('/reservations/:id', async (req, res) => {
   try {
