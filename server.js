@@ -181,7 +181,7 @@ app.get('/slots', async (req, res) => {
 
 app.post('/reservations', async (req, res) => {
   try {
-    const { slot, nom, prenom, email, tel, moniteurId, role } = req.body;
+    const { slot, nom, prenom, email, tel, moniteurId } = req.body;
     if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
 
     const dateSlot = new Date(slot);
@@ -226,6 +226,7 @@ app.post('/reservations', async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
+
 
 
 app.delete('/reservations/:id', async (req, res) => {
