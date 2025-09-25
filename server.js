@@ -187,12 +187,6 @@ app.post('/reservations', async (req, res) => {
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    // Vérification spéciale : bloquer 14h pour les élèves
-    const slotHour = dateSlot.getHours(); // heure locale serveur
-    if (slotHour === 14 && role !== 'admin') {
-      return res.status(403).json({ message: 'Les élèves ne peuvent pas réserver à 14h.' });
-    }
-
     // Vérifie si le moniteur est déjà réservé sur ce créneau
     const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
     if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
