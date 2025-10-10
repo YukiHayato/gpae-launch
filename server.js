@@ -13,13 +13,20 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 // -------------------
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://auto-ecole-essentiel.lovable.app",
-    "https://greenpermis-autoecole.fr"
-  ],
+  origin: (origin, callback) => {
+    const allowed = [
+      "http://localhost:5173",
+      "https://auto-ecole-essentiel.lovable.app",
+      "https://greenpermis-autoecole.fr",
+      "https://www.greenpermis-autoecole.fr"
+    ];
+    if (!origin || allowed.includes(origin)) return callback(null, true);
+    console.warn("❌ Origin non autorisée:", origin);
+    return callback(new Error("CORS non autorisé"));
+  },
   credentials: true
 }));
+
 app.use(express.json());
 
 // Logs simples
