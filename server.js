@@ -21,8 +21,8 @@ app.use(cors({
       "https://www.greenpermis-autoecole.fr"
     ];
     if (!origin || allowed.includes(origin)) return callback(null, true);
-    console.warn("❌ Origin non autorisée:", origin);
-    return callback(new Error("CORS non autorisé"));
+    console.warn("âŒ Origin non autorisÃ©e:", origin);
+    return callback(new Error("CORS non autorisÃ©"));
   },
   credentials: true
 }));
@@ -40,8 +40,8 @@ app.use((req, res, next) => {
 // MongoDB / Models
 // -------------------
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connectée'))
-  .catch(err => console.error('❌ Erreur MongoDB:', err));
+  .then(() => console.log('âœ… MongoDB connectÃ©e'))
+  .catch(err => console.error('âŒ Erreur MongoDB:', err));
 
 const userSchema = new mongoose.Schema({
   nom: String,
@@ -117,42 +117,42 @@ app.get('/users', async (req, res) => {
 app.post('/users', async (req, res) => {
   try {
     const { nom, prenom, email, password, role, tel } = req.body;
-    if (!nom || !prenom || !role) return res.status(400).json({ message: 'Nom, prénom et rôle requis' });
+    if (!nom || !prenom || !role) return res.status(400).json({ message: 'Nom, prÃ©nom et rÃ´le requis' });
 
     const existing = email ? await User.findOne({ email }) : null;
-    if (existing) return res.status(409).json({ message: 'Email déjà utilisé' });
+    if (existing) return res.status(409).json({ message: 'Email dÃ©jÃ  utilisÃ©' });
 
     const newUser = new User({ nom, prenom, email: email || null, password: password || null, role, tel: tel || null });
     await newUser.save();
 
-    res.status(201).json({ message: 'Utilisateur ajouté', user: newUser });
+    res.status(201).json({ message: 'Utilisateur ajoutÃ©', user: newUser });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
 // -------------------
-// Supprimer un utilisateur (détache moniteur)
+// Supprimer un utilisateur (dÃ©tache moniteur)
 app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const user = await User.findById(id);
-    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvÃ©' });
 
-    // Détacher le moniteur de toutes ses réservations
+    // DÃ©tacher le moniteur de toutes ses rÃ©servations
     if (user.role === 'moniteur') {
       await Reservation.updateMany({ moniteur: id }, { $set: { moniteur: null } });
     }
 
     await User.deleteOne({ _id: id });
-    res.json({ message: 'Utilisateur supprimé et réservations détachées si moniteur' });
+    res.json({ message: 'Utilisateur supprimÃ© et rÃ©servations dÃ©tachÃ©es si moniteur' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
 // -------------------
-// Créneaux & Réservations
+// CrÃ©neaux & RÃ©servations
 // -------------------
 app.get('/slots', async (req, res) => {
   try {
@@ -194,13 +194,13 @@ app.post('/reservations', async (req, res) => {
     const dateSlot = new Date(slot);
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
 
-    // Vérifie si le moniteur est déjà réservé sur ce créneau
+    // VÃ©rifie si le moniteur est dÃ©jÃ  rÃ©servÃ© sur ce crÃ©neau
     const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
-    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est dÃ©jÃ  rÃ©servÃ© sur ce crÃ©neau' });
 
-    // Vérifie si l'élève a déjà une réservation avec ce même moniteur
+    // VÃ©rifie si l'Ã©lÃ¨ve a dÃ©jÃ  une rÃ©servation avec ce mÃªme moniteur
     const existingForUserSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), email, moniteur: moniteurId });
-    if (existingForUserSameMoniteur) return res.status(409).json({ message: 'Vous avez déjà une réservation avec ce moniteur sur ce créneau' });
+    if (existingForUserSameMoniteur) return res.status(409).json({ message: 'Vous avez dÃ©jÃ  une rÃ©servation avec ce moniteur sur ce crÃ©neau' });
 
     const newReservation = new Reservation({
       slot: dateSlot.toISOString(),
@@ -218,17 +218,17 @@ app.post('/reservations', async (req, res) => {
       const formatted = dateSlot.toLocaleString('fr-FR', options);
 
       const moniteur = await User.findById(moniteurId);
-      const moniteurNom = moniteur ? `${moniteur.prenom} ${moniteur.nom}` : "Non assigné";
+      const moniteurNom = moniteur ? `${moniteur.prenom} ${moniteur.nom}` : "Non assignÃ©";
 
       transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
+        from: `"Green Permis Auto-Ã©cole" <${process.env.MAIL_USER}>`,
         to: email,
-        subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteurNom} a bien été enregistrée.\n\nMerci,\nGreen Permis Auto-école`
+        subject: "Confirmation de rÃ©servation",
+        text: `Bonjour ${prenom},\n\nVotre rÃ©servation pour le ${formatted} avec le moniteur ${moniteurNom} a bien Ã©tÃ© enregistrÃ©e.\n\nMerci,\nGreen Permis Auto-Ã©cole`
       }).catch(console.error);
     }
 
-    res.status(201).json({ message: 'Réservation créée', reservation: newReservation });
+    res.status(201).json({ message: 'RÃ©servation crÃ©Ã©e', reservation: newReservation });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
@@ -240,31 +240,31 @@ app.delete('/reservations/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const reservation = await Reservation.findById(id).populate('moniteur');
-    if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
+    if (!reservation) return res.status(404).json({ message: 'RÃ©servation non trouvÃ©e' });
 
     await Reservation.deleteOne({ _id: id });
 
     if (reservation.email) {
       const options = { timeZone: 'Europe/Paris', hour12: false };
       const formatted = new Date(reservation.slot).toLocaleString('fr-FR', options);
-      const moniteurNom = reservation.moniteur ? `${reservation.moniteur.prenom} ${reservation.moniteur.nom}` : "Non assigné";
+      const moniteurNom = reservation.moniteur ? `${reservation.moniteur.prenom} ${reservation.moniteur.nom}` : "Non assignÃ©";
 
       transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
+        from: `"Green Permis Auto-Ã©cole" <${process.env.MAIL_USER}>`,
         to: reservation.email,
-        subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${moniteurNom} a été annulée.\n\nMerci,\nGreen Permis Auto-école`
+        subject: "Annulation de rÃ©servation",
+        text: `Bonjour ${reservation.prenom},\n\nVotre rÃ©servation prÃ©vue le ${formatted} avec le moniteur ${moniteurNom} a Ã©tÃ© annulÃ©e.\n\nMerci,\nGreen Permis Auto-Ã©cole`
       }).catch(console.error);
     }
 
-    res.json({ message: 'Réservation annulée' });
+    res.json({ message: 'RÃ©servation annulÃ©e' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
 // -------------------
-// Admin : Toutes les réservations d'un même créneau
+// Admin : Toutes les rÃ©servations d'un mÃªme crÃ©neau
 // -------------------
 app.get('/admin/reservations/:slot', async (req, res) => {
   try {
@@ -290,7 +290,7 @@ app.get('/admin/reservations/:slot', async (req, res) => {
 });
 
 // -------------------
-// Admin : Ajouter une réservation sur un créneau existant
+// Admin : Ajouter une rÃ©servation sur un crÃ©neau existant
 // -------------------
 app.post('/admin/reservations', async (req, res) => {
   try {
@@ -301,19 +301,19 @@ app.post('/admin/reservations', async (req, res) => {
     if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide' });
 
     const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
-    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
+    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est dÃ©jÃ  rÃ©servÃ© sur ce crÃ©neau' });
 
     const newReservation = new Reservation({ slot: dateSlot.toISOString(), nom, prenom, email, tel: tel || '', moniteur: moniteurId });
     await newReservation.save();
 
-    res.status(201).json({ message: 'Réservation ajoutée sur le créneau', reservation: newReservation });
+    res.status(201).json({ message: 'RÃ©servation ajoutÃ©e sur le crÃ©neau', reservation: newReservation });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
 // -------------------
-// Envoi mail à tous
+// Envoi mail Ã  tous
 // -------------------
 app.post('/send-mail-all', async (req, res) => {
   const { subject, message } = req.body;
@@ -324,13 +324,13 @@ app.post('/send-mail-all', async (req, res) => {
     for (let user of users) {
       if (!user.email) continue;
       await transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
+        from: `"Green Permis Auto-Ã©cole" <${process.env.MAIL_USER}>`,
         to: user.email,
         subject,
-        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nGreen Permis Auto-école`
+        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nGreen Permis Auto-Ã©cole`
       });
     }
-    res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
+    res.json({ message: `Mails envoyÃ©s Ã  ${users.length} utilisateurs` });
   } catch (err) {
     console.error("Erreur envoi mails:", err);
     res.status(500).json({ message: "Erreur lors de l'envoi des mails", error: err.message });
@@ -340,8 +340,8 @@ app.post('/send-mail-all', async (req, res) => {
 // -------------------
 // Test / Health
 // -------------------
-app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École' }));
+app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto Ã‰cole' }));
 
-app.listen(PORT, () => console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`ðŸš— Serveur dÃ©marrÃ© sur http://localhost:${PORT}`));
 
 export default app;
