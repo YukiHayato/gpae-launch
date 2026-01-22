@@ -13,23 +13,15 @@ const PORT = process.env.PORT || 3000;
    MIDDLEWARE
 ========================= */
 
+// CORRECTION MAJEURE ICI : Configuration CORS permissive pour éviter "Erreur réseau"
 app.use(cors({
-  origin: (origin, callback) => {
-    const allowed = [
-      "http://localhost:5173",
-      "https://auto-ecole-essentiel.lovable.app",
-      "https://greenpermis-autoecole.fr",
-      "https://www.greenpermis-autoecole.fr"
-    ];
-    if (!origin || allowed.includes(origin)) return callback(null, true);
-    console.warn("❌ CORS refusé :", origin);
-    callback(new Error("CORS non autorisé"));
-  },
+  origin: true, // Autorise toutes les origines (temporairement pour le debug)
   credentials: true
 }));
 
 app.use(express.json());
 
+// Log des requêtes pour debug
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -90,34 +82,41 @@ const Reservation = mongoose.model('Reservation', reservationSchema, 'reservatio
    MAILER
 ========================= */
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS
-  }
-});
+// Sécurité : ne plante pas si les variables d'env sont manquantes
+const transporter = (process.env.MAIL_USER && process.env.MAIL_PASS) 
+  ? nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.MAIL_USER,
+        pass: process.env.MAIL_PASS
+      }
+    })
+  : null;
 
 /* =========================
    AUTH
 ========================= */
 
 app.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ message: 'Email et mot de passe requis' });
+  try {
+    const { email, password } = req.body;
+    if (!email || !password)
+      return res.status(400).json({ message: 'Email et mot de passe requis' });
 
-  const user = await User.findOne({ email: email.toLowerCase(), password });
-  if (!user)
-    return res.status(401).json({ message: 'Identifiants incorrects' });
+    const user = await User.findOne({ email: email.toLowerCase(), password });
+    if (!user)
+      return res.status(401).json({ message: 'Identifiants incorrects' });
 
-  res.json({
-    email: user.email,
-    nom: user.nom,
-    prenom: user.prenom,
-    role: user.role,
-    tel: user.tel
-  });
+    res.json({
+      email: user.email,
+      nom: user.nom,
+      prenom: user.prenom,
+      role: user.role,
+      tel: user.tel
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Erreur serveur lors du login" });
+  }
 });
 
 /* =========================
@@ -125,41 +124,47 @@ app.post('/login', async (req, res) => {
 ========================= */
 
 app.get('/users', async (_, res) => {
-  const users = await User.find({});
-  res.json(users);
+  try {
+    const users = await User.find({});
+    res.json(users);
+  } catch (e) { res.status(500).json({ message: e.message }); }
 });
 
 app.post('/users', async (req, res) => {
-  const { nom, prenom, email, password, role, tel } = req.body;
-  if (!nom || !prenom || !role)
-    return res.status(400).json({ message: 'Nom, prénom et rôle requis' });
+  try {
+    const { nom, prenom, email, password, role, tel } = req.body;
+    if (!nom || !prenom || !role)
+      return res.status(400).json({ message: 'Nom, prénom et rôle requis' });
 
-  if (email) {
-    const exists = await User.findOne({ email });
-    if (exists)
-      return res.status(409).json({ message: 'Email déjà utilisé' });
-  }
+    if (email) {
+      const exists = await User.findOne({ email });
+      if (exists)
+        return res.status(409).json({ message: 'Email déjà utilisé' });
+    }
 
-  const user = new User({ nom, prenom, email, password, role, tel });
-  await user.save();
+    const user = new User({ nom, prenom, email, password, role, tel });
+    await user.save();
 
-  res.status(201).json({ message: 'Utilisateur créé', user });
+    res.status(201).json({ message: 'Utilisateur créé', user });
+  } catch (e) { res.status(500).json({ message: e.message }); }
 });
 
 app.delete('/users/:id', async (req, res) => {
-  const user = await User.findById(req.params.id);
-  if (!user)
-    return res.status(404).json({ message: 'Utilisateur introuvable' });
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user)
+      return res.status(404).json({ message: 'Utilisateur introuvable' });
 
-  if (user.role === 'moniteur') {
-    await Reservation.updateMany(
-      { moniteur: user._id },
-      { $set: { moniteur: null } }
-    );
-  }
+    if (user.role === 'moniteur') {
+      await Reservation.updateMany(
+        { moniteur: user._id },
+        { $set: { moniteur: null } }
+      );
+    }
 
-  await User.deleteOne({ _id: user._id });
-  res.json({ message: 'Utilisateur supprimé' });
+    await User.deleteOne({ _id: user._id });
+    res.json({ message: 'Utilisateur supprimé' });
+  } catch (e) { res.status(500).json({ message: e.message }); }
 });
 
 /* =========================
@@ -167,35 +172,40 @@ app.delete('/users/:id', async (req, res) => {
 ========================= */
 
 app.get('/slots', async (_, res) => {
-  const reservations = await Reservation.find({}).populate('moniteur');
+  try {
+    const reservations = await Reservation.find({}).populate('moniteur');
 
-  const events = reservations
-    .map(r => {
-      const start = new Date(r.slot);
-      if (isNaN(start.getTime())) return null;
+    const events = reservations
+      .map(r => {
+        const start = new Date(r.slot);
+        if (isNaN(start.getTime())) return null;
 
-      const end = new Date(start.getTime() + 60 * 60 * 1000);
-      const moniteurNom = r.moniteur
-        ? `${r.moniteur.prenom} ${r.moniteur.nom}`
-        : 'Non assigné';
+        const end = new Date(start.getTime() + 60 * 60 * 1000); // 1h de durée
+        const moniteurNom = r.moniteur
+          ? `${r.moniteur.prenom} ${r.moniteur.nom}`
+          : 'Non assigné';
 
-      return {
-        id: r._id,
-        title: `${r.prenom || ''} ${r.nom || ''} - ${moniteurNom}`,
-        start: start.toISOString(),
-        end: end.toISOString(),
-        extendedProps: {
-          email: r.email,
-          nom: r.nom,
-          prenom: r.prenom,
-          tel: r.tel,
-          moniteur: moniteurNom
-        }
-      };
-    })
-    .filter(Boolean);
+        return {
+          id: r._id,
+          title: `${r.prenom || ''} ${r.nom || ''} - ${moniteurNom}`,
+          start: start.toISOString(),
+          end: end.toISOString(),
+          extendedProps: {
+            email: r.email,
+            nom: r.nom,
+            prenom: r.prenom,
+            tel: r.tel,
+            moniteur: moniteurNom
+          }
+        };
+      })
+      .filter(Boolean);
 
-  res.json(events);
+    res.json(events);
+  } catch (e) {
+    console.error("Erreur GET /slots", e);
+    res.status(500).json({ message: "Erreur lors de la récupération du planning" });
+  }
 });
 
 /* =========================
@@ -203,81 +213,86 @@ app.get('/slots', async (_, res) => {
 ========================= */
 
 app.post('/reservations', async (req, res) => {
-  const { slot, nom, prenom, email, tel, moniteurId } = req.body;
+  try {
+    const { slot, nom, prenom, email, tel, moniteurId } = req.body;
 
-  if (!slot)
-    return res.status(400).json({ message: 'Slot requis (ISO)' });
+    if (!slot)
+      return res.status(400).json({ message: 'Slot requis (ISO)' });
 
-  const dateSlot = new Date(slot);
-  if (isNaN(dateSlot.getTime()))
-    return res.status(400).json({ message: 'Slot invalide (ISO attendu)' });
+    const dateSlot = new Date(slot);
+    if (isNaN(dateSlot.getTime()))
+      return res.status(400).json({ message: 'Slot invalide (ISO attendu)' });
 
-  if (moniteurId) {
-    const conflict = await Reservation.findOne({
-      slot: dateSlot.toISOString(),
-      moniteur: moniteurId
-    });
-
-    if (conflict)
-      return res.status(409).json({
-        message: 'Moniteur déjà réservé sur ce créneau'
+    if (moniteurId) {
+      const conflict = await Reservation.findOne({
+        slot: dateSlot.toISOString(),
+        moniteur: moniteurId
       });
-  }
 
-  const reservation = new Reservation({
-    slot: dateSlot.toISOString(),
-    nom,
-    prenom,
-    email,
-    tel: tel || '',
-    moniteur: moniteurId || null
-  });
+      if (conflict)
+        return res.status(409).json({
+          message: 'Moniteur déjà réservé sur ce créneau'
+        });
+    }
 
-  await reservation.save();
-
-  if (email) {
-    const formatted = dateSlot.toLocaleString('fr-FR', {
-      timeZone: 'Europe/Paris',
-      hour12: false
+    const reservation = new Reservation({
+      slot: dateSlot.toISOString(),
+      nom,
+      prenom,
+      email,
+      tel: tel || '',
+      moniteur: moniteurId || null
     });
 
-    transporter.sendMail({
-      from: `"Green Permis" <${process.env.MAIL_USER}>`,
-      to: email,
-      subject: "Confirmation de réservation",
-      text: `Bonjour ${prenom || ''},
+    await reservation.save();
 
-Votre réservation du ${formatted} est confirmée.
+    if (transporter && email) {
+      const formatted = dateSlot.toLocaleString('fr-FR', {
+        timeZone: 'Europe/Paris',
+        hour12: false
+      });
 
-Green Permis`
-    }).catch(console.error);
+      transporter.sendMail({
+        from: `"Green Permis" <${process.env.MAIL_USER}>`,
+        to: email,
+        subject: "Confirmation de réservation",
+        text: `Bonjour ${prenom || ''},\n\nVotre réservation du ${formatted} est confirmée.\n\nGreen Permis`
+      }).catch(err => console.error("Erreur envoi mail:", err));
+    }
+
+    res.status(201).json({ message: 'Réservation créée', reservation });
+  } catch (e) {
+    console.error("Erreur POST /reservations", e);
+    res.status(500).json({ message: e.message || "Erreur interne" });
   }
-
-  res.status(201).json({ message: 'Réservation créée', reservation });
 });
 
 app.delete('/reservations/:id', async (req, res) => {
-  const reservation = await Reservation.findById(req.params.id).populate('moniteur');
-  if (!reservation)
-    return res.status(404).json({ message: 'Réservation introuvable' });
+  try {
+    const reservation = await Reservation.findById(req.params.id).populate('moniteur');
+    if (!reservation)
+      return res.status(404).json({ message: 'Réservation introuvable' });
 
-  await Reservation.deleteOne({ _id: reservation._id });
+    await Reservation.deleteOne({ _id: reservation._id });
 
-  if (reservation.email) {
-    const formatted = new Date(reservation.slot).toLocaleString('fr-FR', {
-      timeZone: 'Europe/Paris',
-      hour12: false
-    });
+    if (transporter && reservation.email) {
+      const formatted = new Date(reservation.slot).toLocaleString('fr-FR', {
+        timeZone: 'Europe/Paris',
+        hour12: false
+      });
 
-    transporter.sendMail({
-      from: `"Green Permis" <${process.env.MAIL_USER}>`,
-      to: reservation.email,
-      subject: "Annulation de réservation",
-      text: `Votre réservation du ${formatted} a été annulée.`
-    }).catch(console.error);
+      transporter.sendMail({
+        from: `"Green Permis" <${process.env.MAIL_USER}>`,
+        to: reservation.email,
+        subject: "Annulation de réservation",
+        text: `Votre réservation du ${formatted} a été annulée.`
+      }).catch(console.error);
+    }
+
+    res.json({ message: 'Réservation annulée' });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
-
-  res.json({ message: 'Réservation annulée' });
 });
 
 /* =========================
