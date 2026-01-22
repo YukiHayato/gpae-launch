@@ -185,12 +185,12 @@ app.get('/slots', async (_, res) => {
           ? `${r.moniteur.prenom} ${r.moniteur.nom}`
           : 'Non assigné';
 
+
         return {
-          id: r._id,
-          title: `${r.prenom || ''} ${r.nom || ''} - ${moniteurNom}`,
-          start: start.toISOString(),
-          end: end.toISOString(),
-          extendedProps: {
+            id: r._id,
+            date: r.slot, // YYYY-MM-DD
+            title: `${r.prenom ?? ""} ${r.nom ?? ""}`,
+            extendedProps: {
             email: r.email,
             nom: r.nom,
             prenom: r.prenom,
@@ -219,9 +219,22 @@ app.post('/reservations', async (req, res) => {
     if (!slot)
       return res.status(400).json({ message: 'Slot requis (ISO)' });
 
-    const dateSlot = new Date(slot);
-    if (isNaN(dateSlot.getTime()))
-      return res.status(400).json({ message: 'Slot invalide (ISO attendu)' });
+   if (!/^\d{4}-\d{2}-\d{2}$/.test(slot)) {
+     return res.status(400).json({ message: "Slot invalide (YYYY-MM-DD attendu)" });
+   }
+
+   const conflict = await Reservation.findOne({ slot });
+   if (conflict) {
+     return res.status(409).json({ message: "Déjà réservé ce jour-là" });
+   }
+
+   const reservation = new Reservation({
+     slot,
+     nom,
+     prenom,
+     email,
+     tel: tel || "",
+   });
 
     if (moniteurId) {
       const conflict = await Reservation.findOne({
