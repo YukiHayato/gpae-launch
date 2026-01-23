@@ -85,12 +85,20 @@ const transporter = nodemailer.createTransport({
 });
 
 // -------------------
-// HELPER : Extraire jour et heure d'un slot ISO
+// 🔧 HELPER CORRIGÉ : Extraire jour et heure d'un slot ISO (timezone Paris)
 // -------------------
 const extraireJourEtHeure = (slotISO) => {
   const date = new Date(slotISO);
-  const jourSemaine = date.toLocaleDateString('fr-FR', { weekday: 'long' });
-  const heure = `${date.getHours()}h`;
+  
+  // ✅ Convertir en heure locale Paris
+  const options = { timeZone: 'Europe/Paris' };
+  const parisDate = new Date(date.toLocaleString('en-US', options));
+  
+  const jourSemaine = parisDate.toLocaleDateString('fr-FR', { weekday: 'long' });
+  const heure = `${parisDate.getHours()}h`;
+  
+  console.log(`🕐 Extraction: ${slotISO} → ${jourSemaine} ${heure}`);
+  
   return { jourSemaine, heure };
 };
 
@@ -317,6 +325,9 @@ app.post('/reservations', async (req, res) => {
     const { jourSemaine, heure } = extraireJourEtHeure(slot);
     const heuresDisponibles = moniteur.disponibilites?.get(jourSemaine) || [];
 
+    console.log(`🔍 Vérification: ${moniteur.prenom} ${moniteur.nom} - ${jourSemaine} ${heure}`);
+    console.log(`📅 Disponibilités du jour:`, heuresDisponibles);
+
     if (!heuresDisponibles.includes(heure)) {
       return res.status(400).json({ 
         message: `Le moniteur ${moniteur.prenom} ${moniteur.nom} ne travaille pas le ${jourSemaine} à ${heure}` 
@@ -478,7 +489,7 @@ app.post('/send-mail-all', async (req, res) => {
 // -------------------
 // Test / Health
 // -------------------
-app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École (avec gestion planning moniteurs)' }));
+app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École (avec gestion planning moniteurs - TIMEZONE FIXED)' }));
 
 app.listen(PORT, () => console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`));
 
