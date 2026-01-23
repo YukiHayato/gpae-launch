@@ -43,14 +43,27 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connectée'))
   .catch(err => console.error('❌ Erreur MongoDB:', err));
 
+const availabilitySchema = new mongoose.Schema({
+  day: { type: Number, required: true }, // 0 = dimanche, 6 = samedi
+  startHour: { type: Number, required: true }, // ex: 10
+  endHour: { type: Number, required: true }    // ex: 13
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   nom: String,
   prenom: String,
   email: String,
   password: String,
   role: String,
-  tel: String
+  tel: String,
+
+  // 🔥 NOUVEAU
+  availabilities: {
+    type: [availabilitySchema],
+    default: []
+  }
 });
+
 const User = mongoose.model('User', userSchema, 'users');
 
 const reservationSchema = new mongoose.Schema({
@@ -80,6 +93,113 @@ const transporter = nodemailer.createTransport({
 // -------------------
 // Auth
 // -------------------
+
+app.put('/moniteurs/:id/availabilities', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { availabilities } = req.body;
+
+    if (!Array.isArray(availabilities)) {
+      return res.status(400).json({ message: 'Availabilities must be an array' });
+    }
+
+    const moniteur = await User.findById(id);
+    if (!moniteur || moniteur.role !== 'moniteur') {
+      return res.status(404).json({ message: 'Moniteur introuvable' });
+    }
+
+    // Validation minimale
+    for (const a of availabilities) {
+      if (
+        typeof a.day !== 'number' ||
+        typeof a.startHour !== 'number' ||
+        typeof a.endHour !== 'number' ||
+        a.startHour >= a.endHour
+      ) {
+        return res.status(400).json({ message: 'Disponibilité invalide' });
+      }
+    }
+
+    moniteur.availabilities = availabilities;
+    await moniteur.save();
+
+    res.json({ message: 'Disponibilités mises à jour' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+
+app.get('/moniteurs/disponibles', async (req, res) => {
+  try {
+    const { slot } = req.query;
+    if (!slot) {
+      return res.status(400).json({ message: 'Slot requis (ISO)' });
+    }
+
+    const date = new Date(slot);
+    if (isNaN(date.getTime())) {
+      return res.status(400).json({ message: 'Slot invalide' });
+    }
+
+    const day = date.getDay();
+    const hour = date.getHours();
+
+    // 1️⃣ Moniteurs qui travaillent à ce moment
+    const moniteurs = await User.find({
+      role: 'moniteur',
+      availabilities: {
+        $elemMatch: {
+          day,
+          startHour: { $lte: hour },
+          endHour: { $gt: hour }
+        }
+      }
+    });
+
+    // 2️⃣ Moniteurs déjà réservés
+    const reservations = await Reservation.find({
+      slot: date.toISOString()
+    });
+
+    const reservedIds = reservations.map(r => r.moniteur?.toString());
+
+    // 3️⃣ Filtrage final
+    const disponibles = moniteurs.filter(
+      m => !reservedIds.includes(m._id.toString())
+    );
+
+    res.json(disponibles.map(m => ({
+      id: m._id,
+      nom: m.nom,
+      prenom: m.prenom
+    })));
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
+
+
+const moniteur = await User.findById(moniteurId);
+if (!moniteur || moniteur.role !== 'moniteur') {
+  return res.status(404).json({ message: 'Moniteur introuvable' });
+}
+
+const day = dateSlot.getDay();
+const hour = dateSlot.getHours();
+
+const worksNow = moniteur.availabilities.some(a =>
+  a.day === day &&
+  a.startHour <= hour &&
+  a.endHour > hour
+);
+
+if (!worksNow) {
+  return res.status(409).json({
+    message: 'Ce moniteur ne travaille pas à ce créneau'
+  });
+}
+
 app.post('/login', async (req, res) => {
   let { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis' });
