@@ -94,10 +94,6 @@ const transporter = nodemailer.createTransport({
 // Auth
 // -------------------
 
-const moniteur = await User.findById(moniteurId);
-if (!moniteur || moniteur.role !== 'moniteur') {
-  return res.status(404).json({ message: 'Moniteur introuvable' });
-}
 
 const day = dateSlot.getDay();
 const hour = dateSlot.getHours();
@@ -374,28 +370,6 @@ app.post('/reservations', async (req, res) => {
   }
 });
 
-
-    // Envoi email
-    if (email) {
-      const options = { timeZone: 'Europe/Paris', hour12: false };
-      const formatted = dateSlot.toLocaleString('fr-FR', options);
-
-      const moniteur = await User.findById(moniteurId);
-      const moniteurNom = moniteur ? `${moniteur.prenom} ${moniteur.nom}` : "Non assigné";
-
-      transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
-        to: email,
-        subject: "Confirmation de réservation",
-        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteurNom} a bien été enregistrée.\n\nMerci,\nGreen Permis Auto-école`
-      }).catch(console.error);
-    }
-
-    res.status(201).json({ message: 'Réservation créée', reservation: newReservation });
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
 
 
 
