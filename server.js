@@ -307,6 +307,42 @@ app.post('/admin/reservations', async (req, res) => {
 });
 
 // -------------------
+// Vérifier disponibilité moniteurs pour un créneau
+// -------------------
+app.get('/moniteurs/available', async (req, res) => {
+  try {
+    const { slot } = req.query;
+    
+    if (!slot) {
+      return res.status(400).json({ message: "Le paramètre slot est requis" });
+    }
+
+    // 1. Trouver tous les moniteurs
+    const allMoniteurs = await User.find({ role: 'moniteur' });
+
+    // 2. Trouver les réservations existantes pour ce créneau précis
+    const reservationsCeCreneau = await Reservation.find({ slot: slot });
+
+    // 3. Récupérer les IDs des moniteurs qui sont DÉJÀ pris
+    // Note: on s'assure de comparer des chaînes de caractères (toString)
+    const moniteursOccupesIds = reservationsCeCreneau
+      .filter(r => r.moniteur) // Sécurité si jamais une résa n'a pas de moniteur
+      .map(r => r.moniteur.toString());
+
+    // 4. Filtrer : On garde ceux qui ne sont PAS dans la liste des occupés
+    const moniteursDisponibles = allMoniteurs.filter(moniteur => {
+      return !moniteursOccupesIds.includes(moniteur._id.toString());
+    });
+
+    res.json(moniteursDisponibles);
+
+  } catch (err) {
+    console.error("Erreur disponibilité moniteurs:", err);
+    res.status(500).json({ message: "Erreur serveur", error: err.message });
+  }
+});
+
+// -------------------
 // Envoi mail à tous
 // -------------------
 app.post('/send-mail-all', async (req, res) => {
