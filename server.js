@@ -13,14 +13,20 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 // -------------------
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://auto-ecole-essentiel.lovable.app",
-    "https://greenpermis-autoecole.fr",
-    "https://preview--auto-ecole-essentiel.lovable.app/login"
-  ],
+  origin: (origin, callback) => {
+    const allowed = [
+      "http://localhost:5173",
+      "https://auto-ecole-essentiel.lovable.app",
+      "https://greenpermis-autoecole.fr",
+      "https://www.greenpermis-autoecole.fr"
+    ];
+    if (!origin || allowed.includes(origin)) return callback(null, true);
+    console.warn("❌ Origin non autorisée:", origin);
+    return callback(new Error("CORS non autorisé"));
+  },
   credentials: true
 }));
+
 app.use(express.json());
 
 // Logs simples
@@ -303,42 +309,6 @@ app.post('/admin/reservations', async (req, res) => {
     res.status(201).json({ message: 'Réservation ajoutée sur le créneau', reservation: newReservation });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// -------------------
-// Vérifier disponibilité moniteurs pour un créneau
-// -------------------
-app.get('/moniteurs/available', async (req, res) => {
-  try {
-    const { slot } = req.query;
-    
-    if (!slot) {
-      return res.status(400).json({ message: "Le paramètre slot est requis" });
-    }
-
-    // 1. Trouver tous les moniteurs
-    const allMoniteurs = await User.find({ role: 'moniteur' });
-
-    // 2. Trouver les réservations existantes pour ce créneau précis
-    const reservationsCeCreneau = await Reservation.find({ slot: slot });
-
-    // 3. Récupérer les IDs des moniteurs qui sont DÉJÀ pris
-    // Note: on s'assure de comparer des chaînes de caractères (toString)
-    const moniteursOccupesIds = reservationsCeCreneau
-      .filter(r => r.moniteur) // Sécurité si jamais une résa n'a pas de moniteur
-      .map(r => r.moniteur.toString());
-
-    // 4. Filtrer : On garde ceux qui ne sont PAS dans la liste des occupés
-    const moniteursDisponibles = allMoniteurs.filter(moniteur => {
-      return !moniteursOccupesIds.includes(moniteur._id.toString());
-    });
-
-    res.json(moniteursDisponibles);
-
-  } catch (err) {
-    console.error("Erreur disponibilité moniteurs:", err);
-    res.status(500).json({ message: "Erreur serveur", error: err.message });
   }
 });
 
