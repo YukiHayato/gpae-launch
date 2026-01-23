@@ -2,51 +2,53 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import nodemailer from "nodemailer";
 
 dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-/* ======================
+/* =========================
    MIDDLEWARE
-====================== */
+========================= */
 
-app.use(cors({ origin: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 app.use((req, _res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-/* ======================
-   DB
-====================== */
+/* =========================
+   MONGODB
+========================= */
 
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB connected"))
+  .then(() => console.log("✅ MongoDB connectée"))
   .catch(err => {
-    console.error("❌ Mongo error", err);
+    console.error("❌ MongoDB error:", err);
     process.exit(1);
   });
 
-/* ======================
+/* =========================
    MODELS
-====================== */
+========================= */
 
-const UserSchema = new mongoose.Schema({
+const userSchema = new mongoose.Schema({
   nom: String,
   prenom: String,
   email: String,
-  role: {
-    type: String,
-    enum: ["admin", "eleve", "moniteur"],
-    required: true,
-  },
+  password: String,
+  role: { type: String, enum: ["admin", "eleve", "moniteur"], required: true },
+  tel: String,
 });
 
-const ReservationSchema = new mongoose.Schema(
+const User = mongoose.model("User", userSchema, "users");
+
+const reservationSchema = new mongoose.Schema(
   {
     date: {
       type: String, // YYYY-MM-DD
@@ -59,91 +61,146 @@ const ReservationSchema = new mongoose.Schema(
       index: true,
     },
 
-    eleve: {
-      nom: String,
-      prenom: String,
-      email: String,
-    },
+    nom: String,
+    prenom: String,
+    email: String,
+    tel: String,
 
     moniteur: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
+
+    status: {
+      type: String,
+      enum: ["confirmee", "annulee"],
+      default: "confirmee",
+    },
   },
   { timestamps: true }
 );
 
-// 1 moniteur max par bloc
-ReservationSchema.index(
+// Contrainte logique : 1 moniteur / bloc / jour
+reservationSchema.index(
   { date: 1, block: 1, moniteur: 1 },
   { unique: true, sparse: true }
 );
 
-const User = mongoose.model("User", UserSchema);
-const Reservation = mongoose.model("Reservation", ReservationSchema);
+const Reservation = mongoose.model(
+  "Reservation",
+  reservationSchema,
+  "reservations"
+);
 
-/* ======================
-   HELPERS
-====================== */
+/* =========================
+   MAILER (OPTIONNEL)
+========================= */
 
-const isValidDate = d =>
-  typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
+const transporter =
+  process.env.MAIL_USER && process.env.MAIL_PASS
+    ? nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.MAIL_USER,
+          pass: process.env.MAIL_PASS,
+        },
+      })
+    : null;
 
-const isValidBlock = b =>
-  Number.isInteger(b) && b >= 1 && b <= 9;
-
-const badRequest = (res, msg) =>
-  res.status(400).json({ message: msg });
-
-/* ======================
-   ROUTES
-====================== */
-
-/* ---------- HEALTH ---------- */
-
-app.get("/", (_req, res) => {
-  res.json({ status: "API OK" });
-});
-
-/* ---------- USERS ---------- */
+/* =========================
+   AUTH
+========================= */
 
 app.post("/login", async (req, res) => {
-  const { email } = req.body;
-  const user = await User.findOne({ email });
-  if (!user) return res.status(401).json({ message: "Utilisateur inconnu" });
+  const { email, password } = req.body;
+
+  if (!email || !password)
+    return res.status(400).json({ message: "Email et mot de passe requis" });
+
+  const user = await User.findOne({ email, password });
+  if (!user)
+    return res.status(401).json({ message: "Identifiants incorrects" });
+
   res.json(user);
 });
 
-/* ---------- PLANNING ---------- */
+/* =========================
+   USERS
+========================= */
+
+app.get("/users", async (_req, res) => {
+  res.json(await User.find({}));
+});
+
+app.post("/users", async (req, res) => {
+  const { nom, prenom, email, password, role, tel } = req.body;
+
+  if (!nom || !prenom || !role)
+    return res
+      .status(400)
+      .json({ message: "Nom, prénom et rôle requis" });
+
+  if (email && (await User.findOne({ email })))
+    return res.status(409).json({ message: "Email déjà utilisé" });
+
+  const user = new User({ nom, prenom, email, password, role, tel });
+  await user.save();
+
+  res.status(201).json(user);
+});
+
+app.delete("/users/:id", async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ message: "Introuvable" });
+
+  if (user.role === "moniteur") {
+    await Reservation.updateMany(
+      { moniteur: user._id },
+      { $set: { moniteur: null } }
+    );
+  }
+
+  await user.deleteOne();
+  res.json({ message: "Utilisateur supprimé" });
+});
+
+/* =========================
+   SLOTS / PLANNING
+========================= */
 
 app.get("/slots", async (_req, res) => {
   const reservations = await Reservation.find({})
     .populate("moniteur", "nom prenom");
 
-  res.json(
-    reservations.map(r => ({
-      id: r._id,
-      date: r.date,
-      block: r.block,
-      eleve: r.eleve,
+  const events = reservations.map(r => ({
+    id: r._id,
+    date: r.date,
+    block: r.block,
+    extendedProps: {
+      email: r.email,
+      nom: r.nom,
+      prenom: r.prenom,
       moniteur: r.moniteur
         ? `${r.moniteur.prenom} ${r.moniteur.nom}`
         : null,
-    }))
-  );
+    },
+  }));
+
+  res.json(events);
 });
 
-/* ---------- MONITEURS DISPONIBLES ---------- */
+/* =========================
+   MONITEURS DISPONIBLES
+========================= */
 
 app.get("/moniteurs/available", async (req, res) => {
   const { date, block } = req.query;
 
-  if (!isValidDate(date))
-    return badRequest(res, "date invalide");
-
-  if (!isValidBlock(Number(block)))
-    return badRequest(res, "block invalide");
+  if (!date || !block)
+    return res
+      .status(400)
+      .json({ message: "date et block requis" });
 
   const busy = await Reservation.find({
     date,
@@ -151,7 +208,7 @@ app.get("/moniteurs/available", async (req, res) => {
     moniteur: { $ne: null },
   }).select("moniteur");
 
-  const busyIds = busy.map(r => r.moniteur);
+  const busyIds = busy.map(r => r.moniteur.toString());
 
   const available = await User.find({
     role: "moniteur",
@@ -161,53 +218,68 @@ app.get("/moniteurs/available", async (req, res) => {
   res.json(available);
 });
 
-/* ---------- CREER RESERVATION ---------- */
+/* =========================
+   RESERVATIONS
+========================= */
 
 app.post("/reservations", async (req, res) => {
-  const { date, block, eleve, moniteurId } = req.body;
+  const { date, block, nom, prenom, email, tel, moniteurId } = req.body;
 
-  if (!isValidDate(date))
-    return badRequest(res, "date invalide");
+  if (!date || !block)
+    return res
+      .status(400)
+      .json({ message: "date et block requis" });
 
-  if (!isValidBlock(block))
-    return badRequest(res, "block invalide");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+    return res.status(400).json({ message: "date invalide" });
 
-  if (!eleve?.email)
-    return badRequest(res, "élève requis");
+  if (block < 1 || block > 9)
+    return res.status(400).json({ message: "block invalide" });
 
-  const exists = await Reservation.findOne({
+  const reservation = new Reservation({
     date,
     block,
-    "eleve.email": eleve.email,
-  });
-
-  if (exists)
-    return res.status(409).json({ message: "Déjà réservé" });
-
-  const reservation = await Reservation.create({
-    date,
-    block,
-    eleve,
+    nom,
+    prenom,
+    email,
+    tel,
     moniteur: moniteurId || null,
   });
+
+  await reservation.save();
+
+  if (transporter && email) {
+    transporter.sendMail({
+      from: `"Green Permis" <${process.env.MAIL_USER}>`,
+      to: email,
+      subject: "Confirmation de réservation",
+      text: `Bonjour ${prenom || ""}, votre réservation du ${date} (bloc ${block}) est confirmée.`,
+    }).catch(console.error);
+  }
 
   res.status(201).json(reservation);
 });
 
-/* ---------- ANNULER ---------- */
-
 app.delete("/reservations/:id", async (req, res) => {
-  const r = await Reservation.findById(req.params.id);
-  if (!r) return res.status(404).json({ message: "Introuvable" });
+  const reservation = await Reservation.findById(req.params.id);
+  if (!reservation)
+    return res.status(404).json({ message: "Introuvable" });
 
-  await r.deleteOne();
-  res.json({ message: "Réservation supprimée" });
+  await reservation.deleteOne();
+  res.json({ message: "Réservation annulée" });
 });
 
-/* ======================
-   START
-====================== */
+/* =========================
+   HEALTH
+========================= */
+
+app.get("/", (_req, res) => {
+  res.json({ message: "API Green Permis opérationnelle (blocs)" });
+});
 
 app.listen(PORT, () => {
-  console.log(`🚀 API listening on ${PORT}`);
+  console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`);
 });
+
+
+export default app;
