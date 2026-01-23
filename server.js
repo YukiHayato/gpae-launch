@@ -16,7 +16,8 @@ app.use(cors({
   origin: [
     "http://localhost:5173",
     "https://auto-ecole-essentiel.lovable.app",
-    "https://greenpermis-autoecole.fr"
+    "https://greenpermis-autoecole.fr",
+    "https://preview--auto-ecole-essentiel.lovable.app"
   ],
   credentials: true
 }));
