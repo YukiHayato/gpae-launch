@@ -486,6 +486,51 @@ app.post('/send-mail-all', async (req, res) => {
   }
 });
 
+
+// Envoi d'email individuel ou groupé
+app.post('/send-email', async (req, res) => {
+  try {
+    const { recipient, subject, message } = req.body;
+    
+    if (!subject || !message) {
+      return res.status(400).json({ message: "Sujet et message requis" });
+    }
+
+    let recipients = [];
+
+    if (recipient === 'all') {
+      // Récupérer tous les élèves
+      const students = await User.find({ role: 'eleve' }, "email prenom nom");
+      recipients = students.filter(s => s.email);
+    } else {
+      // Un seul destinataire
+      const user = await User.findOne({ email: recipient });
+      if (!user || !user.email) {
+        return res.status(404).json({ message: "Utilisateur non trouvé" });
+      }
+      recipients = [user];
+    }
+
+    // Envoi des emails
+    for (let user of recipients) {
+      await transporter.sendMail({
+        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
+        to: user.email,
+        subject,
+        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nCordialement,\nGreen Permis Auto-école`
+      });
+    }
+
+    res.json({ 
+      message: `Email${recipients.length > 1 ? 's envoyés' : ' envoyé'} avec succès à ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}` 
+    });
+  } catch (err) {
+    console.error("Erreur envoi email:", err);
+    res.status(500).json({ message: "Erreur lors de l'envoi", error: err.message });
+  }
+});
+
+
 // -------------------
 // Test / Health
 // -------------------
