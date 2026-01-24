@@ -464,27 +464,6 @@ app.post('/admin/reservations', async (req, res) => {
 // -------------------
 // Envoi mail à tous
 // -------------------
-app.post('/send-mail-all', async (req, res) => {
-  const { subject, message } = req.body;
-  if (!subject || !message) return res.status(400).json({ message: "Sujet et message requis" });
-
-  try {
-    const users = await User.find({}, "email prenom nom");
-    for (let user of users) {
-      if (!user.email) continue;
-      await transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
-        to: user.email,
-        subject,
-        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nMerci,\nGreen Permis Auto-école`
-      });
-    }
-    res.json({ message: `Mails envoyés à ${users.length} utilisateurs` });
-  } catch (err) {
-    console.error("Erreur envoi mails:", err);
-    res.status(500).json({ message: "Erreur lors de l'envoi des mails", error: err.message });
-  }
-});
 
 
 // Envoi d'email individuel ou groupé
@@ -499,16 +478,20 @@ app.post('/send-email', async (req, res) => {
     let recipients = [];
 
     if (recipient === 'all') {
-      // Récupérer tous les élèves
+      // Récupérer tous les élèves (et pas tous les users)
       const students = await User.find({ role: 'eleve' }, "email prenom nom");
       recipients = students.filter(s => s.email);
     } else {
-      // Un seul destinataire
+      // Un seul destinataire - recipient contient l'EMAIL directement
       const user = await User.findOne({ email: recipient });
       if (!user || !user.email) {
         return res.status(404).json({ message: "Utilisateur non trouvé" });
       }
       recipients = [user];
+    }
+
+    if (recipients.length === 0) {
+      return res.status(400).json({ message: "Aucun destinataire trouvé" });
     }
 
     // Envoi des emails
@@ -529,7 +512,6 @@ app.post('/send-email', async (req, res) => {
     res.status(500).json({ message: "Erreur lors de l'envoi", error: err.message });
   }
 });
-
 
 // -------------------
 // Test / Health
