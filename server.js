@@ -73,21 +73,6 @@ const reservationSchema = new mongoose.Schema({
 });
 const Reservation = mongoose.model('Reservation', reservationSchema, 'reservations');
 
-// 🆕 NOUVEAU SCHÉMA : Logs d'envoi d'emails
-const emailLogSchema = new mongoose.Schema({
-  sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Admin qui a envoyé
-  sentByEmail: String, // Email de l'admin
-  recipientType: String, // 'single' ou 'all'
-  recipientCount: Number,
-  recipients: [String], // Liste des emails destinataires
-  subject: String,
-  message: String,
-  isHTML: { type: Boolean, default: false },
-  sentAt: { type: Date, default: Date.now },
-  status: String // 'success' ou 'error'
-});
-const EmailLog = mongoose.model('EmailLog', emailLogSchema, 'emaillogs');
-
 // -------------------
 // Mailer
 // -------------------
@@ -98,58 +83,6 @@ const transporter = nodemailer.createTransport({
     pass: process.env.MAIL_PASS,
   },
 });
-
-// -------------------
-// 🆕 MIDDLEWARE : Vérification admin
-// -------------------
-const requireAdmin = async (req, res, next) => {
-  const { adminEmail } = req.body;
-  
-  if (!adminEmail) {
-    return res.status(401).json({ message: 'Email administrateur requis pour cette action' });
-  }
-
-  try {
-    const admin = await User.findOne({ email: adminEmail.toLowerCase() });
-    
-    if (!admin || admin.role !== 'admin') {
-      return res.status(403).json({ message: 'Accès refusé : droits administrateur requis' });
-    }
-    
-    // Attacher l'admin à la requête pour utilisation ultérieure
-    req.admin = admin;
-    next();
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur de vérification', error: err.message });
-  }
-};
-
-// -------------------
-// 🆕 RATE LIMITING SIMPLE (en mémoire)
-// -------------------
-const emailRateLimits = new Map(); // email => { count, resetTime }
-const RATE_LIMIT = 50; // Max 50 emails par heure par admin
-const RATE_WINDOW = 60 * 60 * 1000; // 1 heure en ms
-
-const checkRateLimit = (adminEmail) => {
-  const now = Date.now();
-  const limit = emailRateLimits.get(adminEmail);
-  
-  // Pas encore de limite ou fenêtre expirée
-  if (!limit || now > limit.resetTime) {
-    emailRateLimits.set(adminEmail, { count: 1, resetTime: now + RATE_WINDOW });
-    return { allowed: true, remaining: RATE_LIMIT - 1 };
-  }
-  
-  // Incrémenter le compteur
-  if (limit.count < RATE_LIMIT) {
-    limit.count++;
-    return { allowed: true, remaining: RATE_LIMIT - limit.count };
-  }
-  
-  // Limite atteinte
-  return { allowed: false, remaining: 0, resetIn: Math.ceil((limit.resetTime - now) / 1000 / 60) };
-};
 
 // -------------------
 // 🔧 HELPER CORRIGÉ : Extraire jour et heure d'un slot ISO (timezone Paris)
@@ -300,49 +233,58 @@ app.get('/moniteurs/disponibles', async (req, res) => {
       if (!moniteur.disponibilites || moniteur.disponibilites.size === 0) {
         return false; // Pas de planning défini
       }
-
-      const heuresDisponibles = moniteur.disponibilites.get(jour) || [];
-      return heuresDisponibles.includes(heure);
+      const heuresDuJour = moniteur.disponibilites.get(jour) || [];
+      return heuresDuJour.includes(heure);
     });
 
     // Formater la réponse
-    const response = moniteursDisponibles.map(m => ({
-      id: m._id,
+    const formatted = moniteursDisponibles.map(m => ({
+      _id: m._id,
       nom: m.nom,
       prenom: m.prenom,
-      email: m.email,
-      tel: m.tel
+      email: m.email
     }));
 
-    res.json(response);
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
   }
 });
 
-app.get('/reservations', async (req, res) => {
+// -------------------
+// Supprimer un utilisateur (détache moniteur)
+app.delete('/users/:id', async (req, res) => {
   try {
-    const { userEmail } = req.query;
-    let reservations;
+    const { id } = req.params;
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
-    if (userEmail) {
-      reservations = await Reservation.find({ email: userEmail }).populate('moniteur');
-    } else {
-      reservations = await Reservation.find({}).populate('moniteur');
+    // Détacher le moniteur de toutes ses réservations
+    if (user.role === 'moniteur') {
+      await Reservation.updateMany({ moniteur: id }, { $set: { moniteur: null } });
     }
 
-    const events = reservations.map(r => {
-      const start = new Date(r.slot);
-      const end = new Date(start.getTime() + 60 * 60 * 1000);
-      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "Non assigné";
+    await User.deleteOne({ _id: id });
+    res.json({ message: 'Utilisateur supprimé et réservations détachées si moniteur' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  }
+});
 
-      if (isNaN(start.getTime())) {
-        console.error('⚠️ Slot invalide:', r.slot);
-        return null;
-      }
+// -------------------
+// Créneaux & Réservations
+// -------------------
+app.get('/slots', async (req, res) => {
+  try {
+    const reservations = await Reservation.find({}).populate('moniteur');
+    const events = reservations.map(r => {
+      const moniteurNom = r.moniteur ? `${r.moniteur.prenom} ${r.moniteur.nom}` : "";
+      const start = new Date(r.slot);
+      if (isNaN(start.getTime())) return null;
+      const end = new Date(start.getTime() + 60*60*1000);
 
       return {
-        id: r._id.toString(),
+        id: r._id,
         title: `${r.prenom} ${r.nom} - ${moniteurNom}`,
         start: start.toISOString(),
         end: end.toISOString(),
@@ -520,36 +462,25 @@ app.post('/admin/reservations', async (req, res) => {
 });
 
 // -------------------
-// 🆕 ENVOI D'EMAILS ADMIN (AMÉLIORÉ)
+// Envoi mail à tous
 // -------------------
 
-// Envoi d'email individuel ou groupé avec vérification admin
-app.post('/admin/send-email', requireAdmin, async (req, res) => {
+
+// Envoi d'email individuel ou groupé
+app.post('/send-email', async (req, res) => {
   try {
-    const { recipient, subject, message, isHTML } = req.body;
-    const admin = req.admin;
+    const { recipient, subject, message } = req.body;
     
     if (!subject || !message) {
       return res.status(400).json({ message: "Sujet et message requis" });
     }
 
-    // 🆕 Vérification du rate limit
-    const rateCheck = checkRateLimit(admin.email);
-    if (!rateCheck.allowed) {
-      return res.status(429).json({ 
-        message: `Limite d'envoi atteinte. Réessayez dans ${rateCheck.resetIn} minutes.`,
-        resetIn: rateCheck.resetIn 
-      });
-    }
-
     let recipients = [];
-    let recipientType = 'single';
 
     if (recipient === 'all') {
-      // Récupérer tous les élèves
+      // Récupérer tous les élèves (et pas tous les users)
       const students = await User.find({ role: 'eleve' }, "email prenom nom");
       recipients = students.filter(s => s.email);
-      recipientType = 'all';
     } else {
       // Un seul destinataire - recipient contient l'EMAIL directement
       const user = await User.findOne({ email: recipient });
@@ -563,126 +494,29 @@ app.post('/admin/send-email', requireAdmin, async (req, res) => {
       return res.status(400).json({ message: "Aucun destinataire trouvé" });
     }
 
-    // 🆕 Préparer les options d'email selon le format (HTML ou texte)
-    const emailOptions = {
-      from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
-      subject
-    };
-
     // Envoi des emails
-    const emailPromises = recipients.map(user => {
-      const personalizedMessage = isHTML 
-        ? message.replace(/{{prenom}}/g, user.prenom || "").replace(/{{nom}}/g, user.nom || "")
-        : `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nCordialement,\nGreen Permis Auto-école`;
-
-      return transporter.sendMail({
-        ...emailOptions,
+    for (let user of recipients) {
+      await transporter.sendMail({
+        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
         to: user.email,
-        ...(isHTML ? { html: personalizedMessage } : { text: personalizedMessage })
+        subject,
+        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nCordialement,\nGreen Permis Auto-école`
       });
-    });
-
-    await Promise.all(emailPromises);
-
-    // 🆕 Logger l'envoi dans la base de données
-    const emailLog = new EmailLog({
-      sentBy: admin._id,
-      sentByEmail: admin.email,
-      recipientType,
-      recipientCount: recipients.length,
-      recipients: recipients.map(r => r.email),
-      subject,
-      message,
-      isHTML: isHTML || false,
-      status: 'success'
-    });
-    await emailLog.save();
-
-    console.log(`📧 ${recipients.length} email(s) envoyé(s) par ${admin.email}`);
-
-    res.json({ 
-      message: `Email${recipients.length > 1 ? 's envoyés' : ' envoyé'} avec succès à ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}`,
-      count: recipients.length,
-      remaining: rateCheck.remaining
-    });
-  } catch (err) {
-    console.error("❌ Erreur envoi email:", err);
-    
-    // Logger l'échec
-    try {
-      const emailLog = new EmailLog({
-        sentBy: req.admin._id,
-        sentByEmail: req.admin.email,
-        recipientType: req.body.recipient === 'all' ? 'all' : 'single',
-        recipientCount: 0,
-        recipients: [],
-        subject: req.body.subject,
-        message: req.body.message,
-        isHTML: req.body.isHTML || false,
-        status: 'error'
-      });
-      await emailLog.save();
-    } catch (logErr) {
-      console.error("❌ Erreur lors du logging:", logErr);
     }
 
-    res.status(500).json({ message: "Erreur lors de l'envoi", error: err.message });
-  }
-});
-
-// 🆕 NOUVEL ENDPOINT : Récupérer l'historique des emails envoyés
-app.get('/admin/email-logs', requireAdmin, async (req, res) => {
-  try {
-    const { limit = 50, page = 1 } = req.query;
-    
-    const logs = await EmailLog.find({})
-      .sort({ sentAt: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .populate('sentBy', 'nom prenom email');
-
-    const total = await EmailLog.countDocuments();
-
-    res.json({
-      logs,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit))
-      }
+    res.json({ 
+      message: `Email${recipients.length > 1 ? 's envoyés' : ' envoyé'} avec succès à ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}` 
     });
   } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-  }
-});
-
-// 🆕 NOUVEL ENDPOINT : Statistiques d'envoi d'emails
-app.get('/admin/email-stats', requireAdmin, async (req, res) => {
-  try {
-    const now = new Date();
-    const last24h = new Date(now - 24 * 60 * 60 * 1000);
-    const last7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
-    const last30d = new Date(now - 30 * 24 * 60 * 60 * 1000);
-
-    const stats = {
-      last24h: await EmailLog.countDocuments({ sentAt: { $gte: last24h }, status: 'success' }),
-      last7d: await EmailLog.countDocuments({ sentAt: { $gte: last7d }, status: 'success' }),
-      last30d: await EmailLog.countDocuments({ sentAt: { $gte: last30d }, status: 'success' }),
-      total: await EmailLog.countDocuments({ status: 'success' }),
-      failed: await EmailLog.countDocuments({ status: 'error' })
-    };
-
-    res.json(stats);
-  } catch (err) {
-    res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    console.error("Erreur envoi email:", err);
+    res.status(500).json({ message: "Erreur lors de l'envoi", error: err.message });
   }
 });
 
 // -------------------
 // Test / Health
 // -------------------
-app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École (avec système emails admin amélioré)' }));
+app.get('/', (req, res) => res.json({ message: 'API GPAE - Planning Auto École (avec gestion planning moniteurs - TIMEZONE FIXED)' }));
 
 app.listen(PORT, () => console.log(`🚗 Serveur démarré sur http://localhost:${PORT}`));
 
