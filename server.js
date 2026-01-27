@@ -466,7 +466,9 @@ app.post('/admin/reservations', async (req, res) => {
 // -------------------
 
 
-// Envoi d'email individuel ou groupé
+// 🚀 VERSION AMÉLIORÉE de l'endpoint /send-email
+// Remplacez l'ancien endpoint (lignes 470-514) par celui-ci dans votre server.js
+
 app.post('/send-email', async (req, res) => {
   try {
     const { recipient, subject, message } = req.body;
@@ -478,11 +480,11 @@ app.post('/send-email', async (req, res) => {
     let recipients = [];
 
     if (recipient === 'all') {
-      // Récupérer tous les élèves (et pas tous les users)
+      // Récupérer tous les élèves
       const students = await User.find({ role: 'eleve' }, "email prenom nom");
       recipients = students.filter(s => s.email);
     } else {
-      // Un seul destinataire - recipient contient l'EMAIL directement
+      // Un seul destinataire
       const user = await User.findOne({ email: recipient });
       if (!user || !user.email) {
         return res.status(404).json({ message: "Utilisateur non trouvé" });
@@ -494,24 +496,66 @@ app.post('/send-email', async (req, res) => {
       return res.status(400).json({ message: "Aucun destinataire trouvé" });
     }
 
-    // Envoi des emails
-    for (let user of recipients) {
-      await transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
-        to: user.email,
-        subject,
-        text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nCordialement,\nGreen Permis Auto-école`
-      });
-    }
-
+    // ✅ AMÉLIORATION : Répondre IMMÉDIATEMENT (pas de timeout)
     res.json({ 
-      message: `Email${recipients.length > 1 ? 's envoyés' : ' envoyé'} avec succès à ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}` 
+      message: `Envoi en cours vers ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}...`,
+      count: recipients.length
     });
+
+    // ✅ AMÉLIORATION : Envoi en parallèle en arrière-plan
+    sendEmailsInBackground(recipients, subject, message);
+
   } catch (err) {
     console.error("Erreur envoi email:", err);
     res.status(500).json({ message: "Erreur lors de l'envoi", error: err.message });
   }
 });
+
+// 🔧 Fonction pour envoyer les emails en arrière-plan
+async function sendEmailsInBackground(recipients, subject, message) {
+  console.log(`📧 Début envoi de ${recipients.length} emails...`);
+  
+  // Envoyer par lots de 5 emails en parallèle (pour ne pas surcharger Gmail)
+  const batchSize = 5;
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (let i = 0; i < recipients.length; i += batchSize) {
+    const batch = recipients.slice(i, i + batchSize);
+    
+    // Envoyer le batch en parallèle
+    const results = await Promise.allSettled(
+      batch.map(user => 
+        transporter.sendMail({
+          from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
+          to: user.email,
+          subject,
+          text: `Bonjour ${user.prenom || ""} ${user.nom || ""},\n\n${message}\n\nCordialement,\nGreen Permis Auto-école`
+        })
+      )
+    );
+
+    // Compter les succès et erreurs
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        successCount++;
+        console.log(`✅ Email envoyé à ${batch[index].email}`);
+      } else {
+        errorCount++;
+        console.error(`❌ Erreur pour ${batch[index].email}:`, result.reason.message);
+      }
+    });
+
+    // Petit délai entre les batches pour ne pas spammer Gmail
+    if (i + batchSize < recipients.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000)); // 1 seconde de pause
+    }
+  }
+
+  console.log(`📧 Envoi terminé: ${successCount} succès, ${errorCount} erreurs`);
+}
+
+
 
 // -------------------
 // Test / Health
