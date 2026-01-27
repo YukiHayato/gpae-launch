@@ -466,6 +466,12 @@ app.post('/admin/reservations', async (req, res) => {
 // -------------------
 
 
+const [recipient, setRecipient] = useState<string>('all');
+const [subject, setSubject] = useState<string>('');
+const [message, setMessage] = useState<string>('');
+const [loading, setLoading] = useState<boolean>(false);
+const [selectedUserEmail, setSelectedUserEmail] = useState<string>('');
+
 // Envoi d'email individuel ou groupé
 app.post('/send-email', async (req, res) => {
   try {
