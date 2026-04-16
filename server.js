@@ -380,19 +380,6 @@ app.delete('/reservations/:id', async (req, res) => {
 
     await Reservation.deleteOne({ _id: id });
 
-    if (reservation.email) {
-      const options = { timeZone: 'Europe/Paris', hour12: false };
-      const formatted = new Date(reservation.slot).toLocaleString('fr-FR', options);
-      const moniteurNom = reservation.moniteur ? `${reservation.moniteur.prenom} ${reservation.moniteur.nom}` : "Non assigné";
-
-      transporter.sendMail({
-        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
-        to: reservation.email,
-        subject: "Annulation de réservation",
-        text: `Bonjour ${reservation.prenom},\n\nVotre réservation prévue le ${formatted} avec le moniteur ${moniteurNom} a été annulée.\n\nMerci,\nGreen Permis Auto-école`
-      }).catch(console.error);
-    }
-
     res.json({ message: 'Réservation annulée' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur', error: err.message });
