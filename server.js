@@ -307,84 +307,9 @@ app.get('/slots', async (req, res) => {
 });
 
 // 🆕 ENDPOINT MODIFIÉ : Validation des disponibilités du moniteur
-//app.post('/reservations', async (req, res) => {
-//  try {
-//    const { slot, nom, prenom, email, tel, moniteurId } = req.body;
-//    if (!slot || !moniteurId) return res.status(400).json({ message: 'Slot et moniteur requis' });
-
-//    const dateSlot = new Date(slot);
-//    if (isNaN(dateSlot.getTime())) return res.status(400).json({ message: 'Slot invalide, format ISO requis' });
-
-    // 👇 NOUVELLE VALIDATION : Vérifier que le moniteur travaille sur ce créneau
-//    const moniteur = await User.findById(moniteurId);
-//    if (!moniteur) return res.status(404).json({ message: 'Moniteur non trouvé' });
-//    if (moniteur.role !== 'moniteur') {
-//      return res.status(400).json({ message: 'L\'utilisateur sélectionné n\'est pas un moniteur' });
-//    }
-
-//    const { jourSemaine, heure } = extraireJourEtHeure(slot);
-//    const heuresDisponibles = moniteur.disponibilites?.get(jourSemaine) || [];
-
-//    console.log(`🔍 Vérification: ${moniteur.prenom} ${moniteur.nom} - ${jourSemaine} ${heure}`);
-//    console.log(`📅 Disponibilités du jour:`, heuresDisponibles);
-
-//    if (!heuresDisponibles.includes(heure)) {
-//      return res.status(400).json({ 
-//        message: `Le moniteur ${moniteur.prenom} ${moniteur.nom} ne travaille pas le ${jourSemaine} à ${heure}` 
- //     });
-//    }
-
-    // Vérifie si le moniteur est déjà réservé sur ce créneau
-//    const existingWithSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), moniteur: moniteurId });
-//    if (existingWithSameMoniteur) return res.status(409).json({ message: 'Ce moniteur est déjà réservé sur ce créneau' });
-
-    // Vérifie si l'élève a déjà une réservation avec ce même moniteur
-//    const existingForUserSameMoniteur = await Reservation.findOne({ slot: dateSlot.toISOString(), email, moniteur: moniteurId });
-//    if (existingForUserSameMoniteur) return res.status(409).json({ message: 'Vous avez déjà une réservation avec ce moniteur sur ce créneau' });
-
-//    const newReservation = new Reservation({
-//      slot: dateSlot.toISOString(),
-//      nom,
-//      prenom,
-//      email,
-//      tel: tel || '',
-   //   moniteur: moniteurId
- //   });
- //   await newReservation.save();
-
-    // Envoi email
-//    if (email) {
-//      const options = { timeZone: 'Europe/Paris', hour12: false };
-//      const formatted = dateSlot.toLocaleString('fr-FR', options);
-//      const moniteurNom = `${moniteur.prenom} ${moniteur.nom}`;
-//
-//      transporter.sendMail({
-//        from: `"Green Permis Auto-école" <${process.env.MAIL_USER}>`,
-//        to: email,
-//        subject: "Confirmation de réservation",
-//        text: `Bonjour ${prenom},\n\nVotre réservation pour le ${formatted} avec le moniteur ${moniteurNom} a bien été enregistrée.\n\nMerci,\nGreen Permis Auto-école`
-//      }).catch(console.error);
-//    }
-//
-//    res.status(201).json({ message: 'Réservation créée', reservation: newReservation });
-//  } catch (err) {
-//    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-//  }
-//});
-
-// app.delete('/reservations/:id', async (req, res) => {
-//  try {
-//    const { id } = req.params;
-//    const reservation = await Reservation.findById(id).populate('moniteur');
-//    if (!reservation) return res.status(404).json({ message: 'Réservation non trouvée' });
-
-//    await Reservation.deleteOne({ _id: id });
-
-//    res.json({ message: 'Réservation annulée' });
-//  } catch (err) {
-//    res.status(500).json({ message: 'Erreur serveur', error: err.message });
-//  }
-//});
+app.post('/reservations', async (req, res) => {
+  return res.status(403).json({ message: "Réservation élève désactivée" });
+});
 
 // -------------------
 // Admin : Toutes les réservations d'un même créneau
